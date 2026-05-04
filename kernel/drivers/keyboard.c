@@ -1,0 +1,84 @@
+#include "keyboard.h"
+
+#include "io.h"
+#include "shell.h"
+
+#define KEYBOARD_DATA_PORT 0x60
+#define SCANCODE_LEFT_SHIFT 0x2A
+#define SCANCODE_RIGHT_SHIFT 0x36
+#define SCANCODE_CAPS_LOCK 0x3A
+
+static int shift_pressed;
+static int caps_lock_enabled;
+
+static const char scancode_ascii_lower[128] = {
+    0,  27, '1', '2', '3', '4', '5', '6',
+    '7', '8', '9', '0', '-', '=', '\b', '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i',
+    'o', 'p', '[', ']', '\n', 0,  'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',
+    '\'', '`', 0,  '\\', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', ',', '.', '/', 0,  '*',
+    0,  ' ', 0,
+};
+
+static const char scancode_ascii_upper[128] = {
+    0,  27, '!', '@', '#', '$', '%', '^',
+    '&', '*', '(', ')', '_', '+', '\b', '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I',
+    'O', 'P', '{', '}', '\n', 0,  'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ':',
+    '"', '~', 0,  '|', 'Z', 'X', 'C', 'V',
+    'B', 'N', 'M', '<', '>', '?', 0,  '*',
+    0,  ' ', 0,
+};
+
+static int is_letter_scancode(uint8_t scancode) {
+    char character = scancode_ascii_lower[scancode];
+    return character >= 'a' && character <= 'z';
+}
+
+void keyboard_initialize(void) {
+    shift_pressed = 0;
+    caps_lock_enabled = 0;
+}
+
+void keyboard_handle_irq(void) {
+    uint8_t scancode = inb(KEYBOARD_DATA_PORT);
+    uint8_t pressed_scancode = scancode & 0x7F;
+
+    if (scancode & 0x80) {
+        if (pressed_scancode == SCANCODE_LEFT_SHIFT || pressed_scancode == SCANCODE_RIGHT_SHIFT) {
+            shift_pressed = 0;
+        }
+
+        return;
+    }
+
+    if (scancode == SCANCODE_LEFT_SHIFT || scancode == SCANCODE_RIGHT_SHIFT) {
+        shift_pressed = 1;
+        return;
+    }
+
+    if (scancode == SCANCODE_CAPS_LOCK) {
+        caps_lock_enabled = !caps_lock_enabled;
+        return;
+    }
+
+    char character = 0;
+    if (scancode < sizeof(scancode_ascii_lower)) {
+        int upper = shift_pressed;
+
+        if (is_letter_scancode(scancode)) {
+            upper = shift_pressed ^ caps_lock_enabled;
+        }
+
+        character = upper ? scancode_ascii_upper[scancode] : scancode_ascii_lower[scancode];
+    }
+
+    if (character == 0) {
+        return;
+    }
+
+    shell_put_char(character);
+}
