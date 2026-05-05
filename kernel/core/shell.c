@@ -354,7 +354,7 @@ static void shell_execute_command(void) {
     } else if (string_equals(command_buffer, "apps")) {
         app_print_all();
     } else if (string_starts_with(command_buffer, "appinfo ")) {
-        initrd_cat_app_metadata(command_buffer + 8);
+        app_print_info(command_buffer + 8);
     } else if (string_equals(command_buffer, "initrd")) {
         initrd_print_info();
     } else if (string_equals(command_buffer, "initrd ls")) {
@@ -376,13 +376,28 @@ static void shell_execute_command(void) {
         app_name[index] = '\0';
         const char* args = skip_spaces(app_text + index);
         const struct app_descriptor* app = app_find(app_name);
+        enum app_kind kind = app_manifest_kind(app_name);
 
-        if (app == 0) {
+        if (kind == APP_KIND_BUILT_IN) {
+            if (app == 0) {
+                terminal_write("Built-in app missing: ");
+                terminal_write(app_name);
+                terminal_write("\n");
+            } else {
+                user_mode_spawn_app_with_args(app->name, app->entry, args);
+            }
+        } else if (kind == APP_KIND_KAPP) {
+            if (!kapp_spawn_app(app_name, args)) {
+                terminal_write("KAPP app failed: ");
+                terminal_write(app_name);
+                terminal_write("\n");
+            }
+        } else if (app != 0) {
+            user_mode_spawn_app_with_args(app->name, app->entry, args);
+        } else if (!kapp_spawn_app(app_name, args)) {
             terminal_write("Unknown app: ");
             terminal_write(app_name);
             terminal_write("\n");
-        } else {
-            user_mode_spawn_app_with_args(app->name, app->entry, args);
         }
     } else if (string_equals(command_buffer, "runall")) {
         terminal_ensure_rows(6);

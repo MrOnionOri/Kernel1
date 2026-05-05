@@ -55,7 +55,7 @@ void task_initialize(void) {
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         tasks[i].id = 0;
-        tasks[i].name = "";
+        tasks[i].name[0] = '\0';
         tasks[i].state = TASK_UNUSED;
         tasks[i].entry = 0;
         tasks[i].user_stack_top = 0;
@@ -99,7 +99,7 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
             }
 
             tasks[i].id = next_task_id++;
-            tasks[i].name = name == 0 ? "user" : name;
+            string_copy(tasks[i].name, name == 0 ? "user" : name, sizeof(tasks[i].name));
             tasks[i].state = TASK_READY;
             tasks[i].entry = entry;
             tasks[i].user_stack_top = user_stack_top;

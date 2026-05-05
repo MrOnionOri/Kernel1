@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #define TASK_ARGS_SIZE 64
+#define TASK_NAME_SIZE 24
 
 enum task_state {
     TASK_UNUSED = 0,
@@ -16,7 +17,7 @@ enum task_state {
 
 struct task {
     uint32_t id;
-    const char* name;
+    char name[TASK_NAME_SIZE];
     enum task_state state;
     uint32_t entry;
     uint32_t user_stack_top;

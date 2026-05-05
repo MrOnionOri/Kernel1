@@ -11,6 +11,8 @@
 #define USER_STRING_MAX 128
 #define USER_STACK_REGION_BASE 0x02000000
 #define USER_STACK_REGION_LIMIT 0x02100000
+#define USER_KAPP_REGION_BASE 0x03000000
+#define USER_KAPP_REGION_LIMIT 0x03100000
 
 extern uint8_t user_image_start;
 extern uint8_t user_image_end;
@@ -35,6 +37,10 @@ static int user_range_is_valid(const void* pointer, uint32_t length) {
     }
 
     if (range_contains((uint32_t)&user_image_start, (uint32_t)&user_image_end, address, length)) {
+        return 1;
+    }
+
+    if (range_contains(USER_KAPP_REGION_BASE, USER_KAPP_REGION_LIMIT, address, length)) {
         return 1;
     }
 

@@ -64,6 +64,8 @@ i686-elf-gcc -T linker.ld -ffreestanding -m32 -nostdlib "-Wl,--build-id=none" `
     $Objects -o "$BuildDir/kernel.elf"
 
 i686-elf-objcopy -O binary "$BuildDir/kernel.elf" "$BuildDir/kernel.bin"
+nasm -f bin apps/hello.asm -o "$BuildDir/hello.payload"
+nasm -f bin apps/echo.asm -o "$BuildDir/echo.payload"
 
 $initrdBytesList = New-Object System.Collections.Generic.List[byte]
 function Add-Ascii($Text) {
@@ -85,7 +87,8 @@ function Add-Record($Name, [byte[]]$Data) {
 
 Add-Ascii "K1RD2"
 $initrdBytesList.Add(0)
-$helloPayload = [System.Text.Encoding]::ASCII.GetBytes("hello from KAPP payload`n")
+$helloPayload = [System.IO.File]::ReadAllBytes("$BuildDir/hello.payload")
+$echoPayload = [System.IO.File]::ReadAllBytes("$BuildDir/echo.payload")
 $helloKapp = New-Object System.Collections.Generic.List[byte]
 $helloKapp.AddRange([byte[]][System.Text.Encoding]::ASCII.GetBytes("KAPP"))
 foreach ($value in @(20, 0, $helloPayload.Length, 0)) {
@@ -95,10 +98,21 @@ foreach ($value in @(20, 0, $helloPayload.Length, 0)) {
     $helloKapp.Add([byte](($value -shr 24) -band 0xFF))
 }
 $helloKapp.AddRange($helloPayload)
+$echoKapp = New-Object System.Collections.Generic.List[byte]
+$echoKapp.AddRange([byte[]][System.Text.Encoding]::ASCII.GetBytes("KAPP"))
+foreach ($value in @(20, 0, $echoPayload.Length, 0)) {
+    $echoKapp.Add([byte]($value -band 0xFF))
+    $echoKapp.Add([byte](($value -shr 8) -band 0xFF))
+    $echoKapp.Add([byte](($value -shr 16) -band 0xFF))
+    $echoKapp.Add([byte](($value -shr 24) -band 0xFF))
+}
+$echoKapp.AddRange($echoPayload)
 Add-Record "apps/demo.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
 Add-Record "apps/clock.txt" ([System.Text.Encoding]::ASCII.GetBytes("clock is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
 Add-Record "apps/reader.txt" ([System.Text.Encoding]::ASCII.GetBytes("reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.`n"))
+Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app`nclock|built-in|Shows PID and ticks`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`n"))
 Add-Record "apps/hello.kapp" ([byte[]]$helloKapp.ToArray())
+Add-Record "apps/echo.kapp" ([byte[]]$echoKapp.ToArray())
 Add-Record "readme.txt" ([System.Text.Encoding]::ASCII.GetBytes("Kernel1 initrd v2: name + u32 size + binary-safe data records.`n"))
 Add-Record "docs/kapp.txt" ([System.Text.Encoding]::ASCII.GetBytes("KAPP v0: magic KAPP, u32 header size, u32 entry offset, u32 image size, u32 flags, payload.`n"))
 $initrdBytesList.Add(0)

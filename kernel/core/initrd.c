@@ -230,25 +230,64 @@ void initrd_cat(const char* name) {
     terminal_write("\n");
 }
 
-void initrd_list_app_metadata(void) {
+static void app_name_from_path(const char* path, const char* suffix, char* output, uint32_t size) {
+    uint32_t index = 0;
+
+    if (size == 0) {
+        return;
+    }
+
+    for (uint32_t i = 5; path[i] != '\0' && index < size - 1; i++) {
+        if (string_ends_with(path + i, suffix)) {
+            break;
+        }
+
+        output[index++] = path[i];
+    }
+
+    output[index] = '\0';
+}
+
+void initrd_for_each_app_metadata(void (*callback)(const char* app_name, const char* path, void* context), void* context) {
     const char* record = initrd_first_record();
 
     if (record == 0) {
-        terminal_write("  <no initrd metadata>\n");
         return;
     }
 
     while (record != 0 && record[0] != '\0') {
         struct initrd_file file;
         if (!initrd_read_file(record, &file)) {
-            terminal_write("  <corrupt initrd app metadata>\n");
             return;
         }
 
         if (string_starts_with(file.name, "apps/") && string_ends_with(file.name, ".txt")) {
-            terminal_write("  ");
-            terminal_write(file.name);
-            terminal_write(" (initrd)\n");
+            char app_name[32];
+            app_name_from_path(file.name, ".txt", app_name, sizeof(app_name));
+            callback(app_name, file.name, context);
+        }
+
+        record = initrd_next_record(record);
+    }
+}
+
+void initrd_for_each_kapp_app(void (*callback)(const char* app_name, const char* path, void* context), void* context) {
+    const char* record = initrd_first_record();
+
+    if (record == 0) {
+        return;
+    }
+
+    while (record != 0 && record[0] != '\0') {
+        struct initrd_file file;
+        if (!initrd_read_file(record, &file)) {
+            return;
+        }
+
+        if (string_starts_with(file.name, "apps/") && string_ends_with(file.name, ".kapp")) {
+            char app_name[32];
+            app_name_from_path(file.name, ".kapp", app_name, sizeof(app_name));
+            callback(app_name, file.name, context);
         }
 
         record = initrd_next_record(record);
