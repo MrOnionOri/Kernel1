@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-KERNEL_SECTORS=80
+KERNEL_SECTORS=96
 KERNEL_BYTES=$((KERNEL_SECTORS * 512))
 INITRD_SECTORS=16
 INITRD_BYTES=$((INITRD_SECTORS * 512))
@@ -85,10 +85,44 @@ ld -m elf_i386 -T linker.ld -nostdlib \
 
 objcopy -O binary "$BUILD_DIR/kernel.elf" "$BUILD_DIR/kernel.bin"
 
-printf 'K1RD1\0' > "$BUILD_DIR/initrd.bin"
-printf 'apps/demo.txt\0demo is currently linked into the kernel image.\nNext: load this app from initrd.\n\0' >> "$BUILD_DIR/initrd.bin"
-printf 'apps/clock.txt\0clock is currently linked into the kernel image.\nNext: load this app from initrd.\n\0' >> "$BUILD_DIR/initrd.bin"
-printf 'readme.txt\0Kernel1 initrd v1: NUL-separated name/content records.\n\0' >> "$BUILD_DIR/initrd.bin"
+write_u32() {
+    local value="$1"
+    printf "\\$(printf '%03o' $((value & 0xFF)))"
+    printf "\\$(printf '%03o' $(((value >> 8) & 0xFF)))"
+    printf "\\$(printf '%03o' $(((value >> 16) & 0xFF)))"
+    printf "\\$(printf '%03o' $(((value >> 24) & 0xFF)))"
+}
+
+append_record() {
+    local name="$1"
+    local file="$2"
+    local size
+    size=$(wc -c < "$file")
+    printf '%s\0' "$name" >> "$BUILD_DIR/initrd.bin"
+    write_u32 "$size" >> "$BUILD_DIR/initrd.bin"
+    cat "$file" >> "$BUILD_DIR/initrd.bin"
+}
+
+printf 'K1RD2\0' > "$BUILD_DIR/initrd.bin"
+printf 'demo is currently linked into the kernel image.\nNext: load this app from initrd.\n' > "$BUILD_DIR/demo.txt"
+printf 'clock is currently linked into the kernel image.\nNext: load this app from initrd.\n' > "$BUILD_DIR/clock.txt"
+printf 'reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.\n' > "$BUILD_DIR/reader.txt"
+printf 'Kernel1 initrd v2: name + u32 size + binary-safe data records.\n' > "$BUILD_DIR/readme.txt"
+printf 'KAPP v0: magic KAPP, u32 header size, u32 entry offset, u32 image size, u32 flags, payload.\n' > "$BUILD_DIR/kapp.txt"
+printf 'hello from KAPP payload\n' > "$BUILD_DIR/hello.payload"
+printf 'KAPP' > "$BUILD_DIR/hello.kapp"
+write_u32 20 >> "$BUILD_DIR/hello.kapp"
+write_u32 0 >> "$BUILD_DIR/hello.kapp"
+write_u32 "$(wc -c < "$BUILD_DIR/hello.payload")" >> "$BUILD_DIR/hello.kapp"
+write_u32 0 >> "$BUILD_DIR/hello.kapp"
+cat "$BUILD_DIR/hello.payload" >> "$BUILD_DIR/hello.kapp"
+
+append_record "apps/demo.txt" "$BUILD_DIR/demo.txt"
+append_record "apps/clock.txt" "$BUILD_DIR/clock.txt"
+append_record "apps/reader.txt" "$BUILD_DIR/reader.txt"
+append_record "apps/hello.kapp" "$BUILD_DIR/hello.kapp"
+append_record "readme.txt" "$BUILD_DIR/readme.txt"
+append_record "docs/kapp.txt" "$BUILD_DIR/kapp.txt"
 printf '\0' >> "$BUILD_DIR/initrd.bin"
 
 INITRD_SIZE=$(wc -c < "$BUILD_DIR/initrd.bin")

@@ -80,6 +80,27 @@ make run
 - `build.sh`: script de compilacion para WSL/Linux.
 - `build.ps1`: script de compilacion y generacion de imagen.
 
+## Initrd y apps KAPP
+
+El bootloader carga una region reservada para el kernel y despues un initrd en
+memoria. El initrd actual usa formato `K1RD2`:
+
+```text
+K1RD2\0
+name\0
+u32 size
+data bytes
+...
+\0
+```
+
+Esto permite guardar archivos binarios. Los `.kapp` son el formato planeado
+para apps cargables desde initrd. Puedes inspeccionar uno con:
+
+```text
+kapp apps/hello.kapp
+```
+
 ## ABI de syscalls
 
 Las apps de usuario usan `int 0x80`.
@@ -100,9 +121,16 @@ Syscalls actuales:
 5 SYS_GETPID                                  retorna pid en eax
 6 SYS_TICKS                                   retorna ticks PIT en eax
 7 SYS_WRITE_BUF  ebx=fd ecx=buffer edx=len    retorna bytes escritos o -1
+8 SYS_OPEN       ebx=path                     retorna fd o -1
+9 SYS_READ       ebx=fd ecx=buffer edx=len    retorna bytes leidos o -1
+10 SYS_CLOSE     ebx=fd                       retorna 0 o -1
+11 SYS_GETARGS   ebx=buffer ecx=len           retorna bytes copiados
 ```
 
 Por ahora `SYS_WRITE_BUF` soporta `fd=1` para stdout.
+
+Las syscalls validan punteros de usuario contra la imagen `.user` y el rango
+reservado de stacks de usuario antes de leer o escribir buffers.
 
 ## Proximos pasos
 

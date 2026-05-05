@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 80
+$KernelSectors = 96
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
@@ -65,12 +65,44 @@ i686-elf-gcc -T linker.ld -ffreestanding -m32 -nostdlib "-Wl,--build-id=none" `
 
 i686-elf-objcopy -O binary "$BuildDir/kernel.elf" "$BuildDir/kernel.bin"
 
-$initrdText = "K1RD1`0" +
-    "apps/demo.txt`0demo is currently linked into the kernel image.`nNext: load this app from initrd.`n`0" +
-    "apps/clock.txt`0clock is currently linked into the kernel image.`nNext: load this app from initrd.`n`0" +
-    "readme.txt`0Kernel1 initrd v1: NUL-separated name/content records.`n`0" +
-    "`0"
-$initrd = [System.Text.Encoding]::ASCII.GetBytes($initrdText)
+$initrdBytesList = New-Object System.Collections.Generic.List[byte]
+function Add-Ascii($Text) {
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes($Text)
+    $initrdBytesList.AddRange([byte[]]$bytes)
+}
+function Add-U32($Value) {
+    $initrdBytesList.Add([byte]($Value -band 0xFF))
+    $initrdBytesList.Add([byte](($Value -shr 8) -band 0xFF))
+    $initrdBytesList.Add([byte](($Value -shr 16) -band 0xFF))
+    $initrdBytesList.Add([byte](($Value -shr 24) -band 0xFF))
+}
+function Add-Record($Name, [byte[]]$Data) {
+    Add-Ascii $Name
+    $initrdBytesList.Add(0)
+    Add-U32 $Data.Length
+    $initrdBytesList.AddRange($Data)
+}
+
+Add-Ascii "K1RD2"
+$initrdBytesList.Add(0)
+$helloPayload = [System.Text.Encoding]::ASCII.GetBytes("hello from KAPP payload`n")
+$helloKapp = New-Object System.Collections.Generic.List[byte]
+$helloKapp.AddRange([byte[]][System.Text.Encoding]::ASCII.GetBytes("KAPP"))
+foreach ($value in @(20, 0, $helloPayload.Length, 0)) {
+    $helloKapp.Add([byte]($value -band 0xFF))
+    $helloKapp.Add([byte](($value -shr 8) -band 0xFF))
+    $helloKapp.Add([byte](($value -shr 16) -band 0xFF))
+    $helloKapp.Add([byte](($value -shr 24) -band 0xFF))
+}
+$helloKapp.AddRange($helloPayload)
+Add-Record "apps/demo.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
+Add-Record "apps/clock.txt" ([System.Text.Encoding]::ASCII.GetBytes("clock is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
+Add-Record "apps/reader.txt" ([System.Text.Encoding]::ASCII.GetBytes("reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.`n"))
+Add-Record "apps/hello.kapp" ([byte[]]$helloKapp.ToArray())
+Add-Record "readme.txt" ([System.Text.Encoding]::ASCII.GetBytes("Kernel1 initrd v2: name + u32 size + binary-safe data records.`n"))
+Add-Record "docs/kapp.txt" ([System.Text.Encoding]::ASCII.GetBytes("KAPP v0: magic KAPP, u32 header size, u32 entry offset, u32 image size, u32 flags, payload.`n"))
+$initrdBytesList.Add(0)
+$initrd = [byte[]]$initrdBytesList.ToArray()
 if ($initrd.Length -gt $InitrdBytes) {
     throw "Initrd is $($initrd.Length) bytes, but reserved space is $InitrdBytes bytes."
 }

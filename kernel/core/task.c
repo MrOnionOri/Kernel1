@@ -29,6 +29,25 @@ static const char* task_state_name(enum task_state state) {
     }
 }
 
+static void string_copy(char* destination, const char* source, uint32_t size) {
+    uint32_t index = 0;
+
+    if (size == 0) {
+        return;
+    }
+
+    if (source == 0) {
+        source = "";
+    }
+
+    while (index < size - 1 && source[index] != '\0') {
+        destination[index] = source[index];
+        index++;
+    }
+
+    destination[index] = '\0';
+}
+
 void task_initialize(void) {
     next_task_id = 1;
     current_task = 0;
@@ -43,6 +62,7 @@ void task_initialize(void) {
         tasks[i].kernel_stack_top = 0;
         tasks[i].exit_code = 0;
         tasks[i].yields = 0;
+        tasks[i].args[0] = '\0';
     }
 }
 
@@ -54,7 +74,23 @@ uint32_t task_current_id(void) {
     return current_task == 0 ? 0 : current_task->id;
 }
 
-struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t user_stack_top) {
+uint32_t task_copy_current_args(char* buffer, uint32_t size) {
+    uint32_t index = 0;
+
+    if (current_task == 0 || buffer == 0 || size == 0) {
+        return 0;
+    }
+
+    while (index < size - 1 && current_task->args[index] != '\0') {
+        buffer[index] = current_task->args[index];
+        index++;
+    }
+
+    buffer[index] = '\0';
+    return index;
+}
+
+struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32_t user_stack_top, const char* args) {
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (tasks[i].state == TASK_UNUSED || tasks[i].state == TASK_EXITED) {
             void* kernel_stack = kmalloc_aligned(TASK_KERNEL_STACK_SIZE, 16);
@@ -70,11 +106,16 @@ struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t u
             tasks[i].kernel_stack_top = (uint32_t)kernel_stack + TASK_KERNEL_STACK_SIZE;
             tasks[i].exit_code = 0;
             tasks[i].yields = 0;
+            string_copy(tasks[i].args, args, sizeof(tasks[i].args));
             return &tasks[i];
         }
     }
 
     return 0;
+}
+
+struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t user_stack_top) {
+    return task_create_user_with_args(name, entry, user_stack_top, "");
 }
 
 struct task* task_create_user(uint32_t entry, uint32_t user_stack_top) {
@@ -223,6 +264,10 @@ void task_print_all_verbose(void) {
         terminal_write_dec(tasks[i].exit_code);
         terminal_write(" yields=");
         terminal_write_dec(tasks[i].yields);
+        if (tasks[i].args[0] != '\0') {
+            terminal_write(" args=");
+            terminal_write(tasks[i].args);
+        }
         terminal_write("\n");
     }
 }

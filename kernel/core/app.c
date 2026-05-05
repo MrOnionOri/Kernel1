@@ -7,10 +7,12 @@
 
 extern void user_test(void);
 extern void clock_app(void);
+extern void reader_app(void);
 
 static const struct app_descriptor apps[] = {
     { "demo", (uint32_t)user_test },
     { "clock", (uint32_t)clock_app },
+    { "reader", (uint32_t)reader_app },
 };
 
 static int string_equals(const char* left, const char* right) {

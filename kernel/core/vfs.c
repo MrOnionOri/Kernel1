@@ -61,6 +61,53 @@ static const char* path_basename(const char* path) {
     return last;
 }
 
+static void string_copy(char* destination, const char* source, uint32_t size) {
+    uint32_t index = 0;
+
+    if (size == 0) {
+        return;
+    }
+
+    while (index < size - 1 && source[index] != '\0') {
+        destination[index] = source[index];
+        index++;
+    }
+
+    destination[index] = '\0';
+}
+
+struct vfs_complete_context {
+    const char* prefix;
+    const char* match;
+    int ambiguous;
+};
+
+static void vfs_complete_visit_root(const char* candidate, struct vfs_complete_context* context) {
+    if (!string_starts_with(candidate, context->prefix)) {
+        return;
+    }
+
+    if (context->match != 0 && !string_equals(context->match, candidate)) {
+        context->ambiguous = 1;
+        return;
+    }
+
+    context->match = candidate;
+}
+
+static void vfs_complete_visit_file(const struct initrd_file* file, void* raw_context) {
+    struct vfs_complete_context* context = (struct vfs_complete_context*)raw_context;
+
+    if (string_starts_with(context->prefix, "apps/")) {
+        vfs_complete_visit_root(file->name, context);
+        return;
+    }
+
+    if (!string_starts_with(file->name, "apps/")) {
+        vfs_complete_visit_root(file->name, context);
+    }
+}
+
 static void vfs_print_root_entry(const struct initrd_file* file, void* context) {
     struct vfs_list_context* list = (struct vfs_list_context*)context;
 
@@ -148,6 +195,30 @@ void vfs_close(int fd) {
     handles[fd].data = 0;
     handles[fd].size = 0;
     handles[fd].offset = 0;
+}
+
+int vfs_complete_path(const char* prefix, char* output, uint32_t size) {
+    struct vfs_complete_context context;
+    context.prefix = prefix;
+    context.match = 0;
+    context.ambiguous = 0;
+
+    if (prefix[0] == '/' && prefix[1] != '\0') {
+        context.prefix = prefix + 1;
+    }
+
+    if (string_starts_with("apps", context.prefix)) {
+        vfs_complete_visit_root("apps", &context);
+    }
+
+    initrd_for_each(vfs_complete_visit_file, &context);
+
+    if (context.match == 0 || context.ambiguous) {
+        return 0;
+    }
+
+    string_copy(output, context.match, size);
+    return 1;
 }
 
 void vfs_list(void) {

@@ -10,6 +10,10 @@
 #define SYS_GETPID 5
 #define SYS_TICKS 6
 #define SYS_WRITE_BUF 7
+#define SYS_OPEN 8
+#define SYS_READ 9
+#define SYS_CLOSE 10
+#define SYS_GETARGS 11
 
 void syscall_dispatch(struct interrupt_frame* frame);
 
