@@ -1,43 +1,43 @@
 [bits 32]
 
 [global user_test]
+[extern user_write]
+[extern user_write_dec]
+[extern user_getpid]
+[extern user_ticks]
+[extern user_exit]
 
 section .user_text
 user_test:
-    mov eax, 1
-    mov ebx, user_message_1
-    int 0x80
+    mov ecx, user_message_1
+    mov edx, user_message_1_len
+    call user_write
 
-    mov eax, 5
-    int 0x80
+    call user_getpid
     mov ebx, eax
-    mov eax, 4
-    int 0x80
+    call user_write_dec
 
-    mov eax, 6
-    int 0x80
+    call user_ticks
     mov ebx, eax
-    mov eax, 4
-    int 0x80
+    call user_write_dec
 
-    mov eax, 1
-    mov ebx, user_message_2
-    int 0x80
+    mov ecx, user_message_2
+    mov edx, user_message_2_len
+    call user_write
 
-    mov eax, 1
-    mov ebx, user_message_3
-    int 0x80
+    mov ecx, user_message_3
+    mov edx, user_message_3_len
+    call user_write
 
-    mov eax, 2
     xor ebx, ebx
-    int 0x80
-
-.halt:
-    jmp .halt
+    call user_exit
 
 section .user_rodata
-user_message_1 db "Hello from ring 3 step 1", 0
-user_message_2 db "Hello from ring 3 step 2", 0
-user_message_3 db "Hello from ring 3 done", 0
+user_message_1 db "[demo] Hello from ring 3 step 1", 10
+user_message_1_len equ $ - user_message_1
+user_message_2 db "[demo] Hello from ring 3 step 2", 10
+user_message_2_len equ $ - user_message_2
+user_message_3 db "[demo] Hello from ring 3 done", 10
+user_message_3_len equ $ - user_message_3
 
 section .note.GNU-stack noalloc noexec nowrite progbits

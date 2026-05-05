@@ -80,6 +80,30 @@ make run
 - `build.sh`: script de compilacion para WSL/Linux.
 - `build.ps1`: script de compilacion y generacion de imagen.
 
+## ABI de syscalls
+
+Las apps de usuario usan `int 0x80`.
+
+```text
+eax = numero de syscall
+ebx/ecx/edx = argumentos
+eax = valor de retorno
+```
+
+Syscalls actuales:
+
+```text
+1 SYS_WRITE      ebx=string_c                 legado/debug
+2 SYS_EXIT       ebx=exit_code                no retorna a usuario
+3 SYS_YIELD      reservado                    pausado por estabilidad
+4 SYS_WRITE_DEC  ebx=value                    imprime decimal/debug
+5 SYS_GETPID                                  retorna pid en eax
+6 SYS_TICKS                                   retorna ticks PIT en eax
+7 SYS_WRITE_BUF  ebx=fd ecx=buffer edx=len    retorna bytes escritos o -1
+```
+
+Por ahora `SYS_WRITE_BUF` soporta `fd=1` para stdout.
+
 ## Proximos pasos
 
 1. Loader de apps/initrd para sacar programas de usuario del binario del kernel.

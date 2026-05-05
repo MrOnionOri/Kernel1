@@ -4,12 +4,27 @@
 #include "terminal.h"
 #include "timer.h"
 
+#define STDOUT_FD 1
+#define WRITE_BUF_MAX 1024
+
 static void syscall_write(const char* text) {
     terminal_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     terminal_write("[user] ");
     terminal_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     terminal_write(text);
     terminal_write("\n");
+}
+
+static int32_t syscall_write_buffer(uint32_t fd, const char* text, uint32_t length) {
+    if (fd != STDOUT_FD || text == 0 || length > WRITE_BUF_MAX) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < length; i++) {
+        terminal_putchar(text[i]);
+    }
+
+    return (int32_t)length;
 }
 
 static void syscall_exit(uint32_t code) {
@@ -51,6 +66,9 @@ void syscall_dispatch(struct interrupt_frame* frame) {
             break;
         case SYS_TICKS:
             frame->eax = timer_ticks();
+            break;
+        case SYS_WRITE_BUF:
+            frame->eax = (uint32_t)syscall_write_buffer(frame->ebx, (const char*)frame->ecx, frame->edx);
             break;
         default:
             terminal_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);

@@ -1,5 +1,6 @@
 #include "app.h"
 
+#include "initrd.h"
 #include "terminal.h"
 
 #include <stddef.h>
@@ -46,8 +47,10 @@ void app_print_all(void) {
     for (uint32_t i = 0; i < sizeof(apps) / sizeof(apps[0]); i++) {
         terminal_write("  ");
         terminal_write(apps[i].name);
-        terminal_write("\n");
+        terminal_write(" (built-in)\n");
     }
+
+    initrd_list_app_metadata();
 }
 
 const struct app_descriptor* app_find(const char* name) {

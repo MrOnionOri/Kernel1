@@ -9,6 +9,7 @@
 #define SYS_WRITE_DEC 4
 #define SYS_GETPID 5
 #define SYS_TICKS 6
+#define SYS_WRITE_BUF 7
 
 void syscall_dispatch(struct interrupt_frame* frame);
 

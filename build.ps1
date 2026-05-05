@@ -6,8 +6,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 64
+$KernelSectors = 80
 $KernelBytes = $KernelSectors * 512
+$InitrdSectors = 16
+$InitrdBytes = $InitrdSectors * 512
 $ImagePath = Join-Path $BuildDir "kernel1.img"
 
 function Require-Command($Name) {
@@ -63,6 +65,16 @@ i686-elf-gcc -T linker.ld -ffreestanding -m32 -nostdlib "-Wl,--build-id=none" `
 
 i686-elf-objcopy -O binary "$BuildDir/kernel.elf" "$BuildDir/kernel.bin"
 
+$initrdText = "K1RD1`0" +
+    "apps/demo.txt`0demo is currently linked into the kernel image.`nNext: load this app from initrd.`n`0" +
+    "apps/clock.txt`0clock is currently linked into the kernel image.`nNext: load this app from initrd.`n`0" +
+    "readme.txt`0Kernel1 initrd v1: NUL-separated name/content records.`n`0" +
+    "`0"
+$initrd = [System.Text.Encoding]::ASCII.GetBytes($initrdText)
+if ($initrd.Length -gt $InitrdBytes) {
+    throw "Initrd is $($initrd.Length) bytes, but reserved space is $InitrdBytes bytes."
+}
+
 $kernel = [System.IO.File]::ReadAllBytes("$BuildDir/kernel.bin")
 if ($kernel.Length -gt $KernelBytes) {
     throw "Kernel is $($kernel.Length) bytes, but bootloader loads only $KernelBytes bytes."
@@ -73,9 +85,10 @@ if ($boot.Length -ne 512) {
     throw "Boot sector must be exactly 512 bytes. Current size: $($boot.Length)"
 }
 
-$image = New-Object byte[] (512 + $KernelBytes)
+$image = New-Object byte[] (512 + $KernelBytes + $InitrdBytes)
 [Array]::Copy($boot, 0, $image, 0, $boot.Length)
 [Array]::Copy($kernel, 0, $image, 512, $kernel.Length)
+[Array]::Copy($initrd, 0, $image, 512 + $KernelBytes, $initrd.Length)
 [System.IO.File]::WriteAllBytes($ImagePath, $image)
 
 Write-Host "Built $ImagePath"

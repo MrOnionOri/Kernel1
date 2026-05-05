@@ -3,12 +3,14 @@
 #include "app.h"
 #include "arch.h"
 #include "heap.h"
+#include "initrd.h"
 #include "memory_map.h"
 #include "pmm.h"
 #include "task.h"
 #include "terminal.h"
 #include "timer.h"
 #include "user_mode.h"
+#include "vfs.h"
 
 #include <stddef.h>
 
@@ -26,11 +28,15 @@ static const char* shell_commands[] = {
     "about",
     "alloc",
     "apps",
+    "appinfo",
+    "cat",
     "clear",
     "gdt",
     "heap",
     "help",
+    "initrd",
     "kmalloc",
+    "ls",
     "mem",
     "paging",
     "pmm",
@@ -160,10 +166,16 @@ static void shell_execute_command(void) {
     shell_history_add(command_buffer);
 
     if (string_equals(command_buffer, "help")) {
-        terminal_write("Commands: help, clear, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, spawn, spawn demo, runall, tasks, tasksv, about\n");
+        terminal_write("Commands: help, clear, ls, ls <dir>, cat <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, initrd, initrd ls, initrd cat <file>, spawn, spawn demo, runall, tasks, tasksv, about\n");
     } else if (string_equals(command_buffer, "clear")) {
         terminal_initialize();
         terminal_write("Kernel1 shell\n");
+    } else if (string_equals(command_buffer, "ls")) {
+        vfs_list();
+    } else if (string_starts_with(command_buffer, "ls ")) {
+        vfs_list_path(command_buffer + 3);
+    } else if (string_starts_with(command_buffer, "cat ")) {
+        vfs_cat(command_buffer + 4);
     } else if (string_equals(command_buffer, "ticks")) {
         terminal_write("Timer ticks: ");
         terminal_write_dec(timer_ticks());
@@ -214,6 +226,14 @@ static void shell_execute_command(void) {
         user_mode_enter_test();
     } else if (string_equals(command_buffer, "apps")) {
         app_print_all();
+    } else if (string_starts_with(command_buffer, "appinfo ")) {
+        initrd_cat_app_metadata(command_buffer + 8);
+    } else if (string_equals(command_buffer, "initrd")) {
+        initrd_print_info();
+    } else if (string_equals(command_buffer, "initrd ls")) {
+        initrd_list();
+    } else if (string_starts_with(command_buffer, "initrd cat ")) {
+        initrd_cat(command_buffer + 11);
     } else if (string_equals(command_buffer, "spawn")) {
         user_mode_spawn_test();
     } else if (string_starts_with(command_buffer, "spawn ")) {

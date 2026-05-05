@@ -2,8 +2,10 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-KERNEL_SECTORS=64
+KERNEL_SECTORS=80
 KERNEL_BYTES=$((KERNEL_SECTORS * 512))
+INITRD_SECTORS=16
+INITRD_BYTES=$((INITRD_SECTORS * 512))
 IMAGE_PATH="$BUILD_DIR/kernel1.img"
 
 RUN=0
@@ -83,6 +85,18 @@ ld -m elf_i386 -T linker.ld -nostdlib \
 
 objcopy -O binary "$BUILD_DIR/kernel.elf" "$BUILD_DIR/kernel.bin"
 
+printf 'K1RD1\0' > "$BUILD_DIR/initrd.bin"
+printf 'apps/demo.txt\0demo is currently linked into the kernel image.\nNext: load this app from initrd.\n\0' >> "$BUILD_DIR/initrd.bin"
+printf 'apps/clock.txt\0clock is currently linked into the kernel image.\nNext: load this app from initrd.\n\0' >> "$BUILD_DIR/initrd.bin"
+printf 'readme.txt\0Kernel1 initrd v1: NUL-separated name/content records.\n\0' >> "$BUILD_DIR/initrd.bin"
+printf '\0' >> "$BUILD_DIR/initrd.bin"
+
+INITRD_SIZE=$(wc -c < "$BUILD_DIR/initrd.bin")
+if [[ "$INITRD_SIZE" -gt "$INITRD_BYTES" ]]; then
+    echo "Initrd is $INITRD_SIZE bytes, but reserved space is $INITRD_BYTES bytes." >&2
+    exit 1
+fi
+
 BOOT_SIZE=$(wc -c < "$BUILD_DIR/boot.bin")
 KERNEL_SIZE=$(wc -c < "$BUILD_DIR/kernel.bin")
 
@@ -98,6 +112,8 @@ fi
 
 cat "$BUILD_DIR/boot.bin" "$BUILD_DIR/kernel.bin" > "$IMAGE_PATH"
 truncate -s $((512 + KERNEL_BYTES)) "$IMAGE_PATH"
+cat "$BUILD_DIR/initrd.bin" >> "$IMAGE_PATH"
+truncate -s $((512 + KERNEL_BYTES + INITRD_BYTES)) "$IMAGE_PATH"
 
 echo "Built $IMAGE_PATH"
 

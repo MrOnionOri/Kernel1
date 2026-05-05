@@ -1,43 +1,43 @@
 [bits 32]
 
 [global clock_app]
+[extern user_write]
+[extern user_write_dec]
+[extern user_getpid]
+[extern user_ticks]
+[extern user_exit]
 
 section .user_text
 clock_app:
-    mov eax, 1
-    mov ebx, clock_title
-    int 0x80
+    mov ecx, clock_title
+    mov edx, clock_title_len
+    call user_write
 
-    mov eax, 1
-    mov ebx, clock_pid
-    int 0x80
+    mov ecx, clock_pid
+    mov edx, clock_pid_len
+    call user_write
 
-    mov eax, 5
-    int 0x80
+    call user_getpid
     mov ebx, eax
-    mov eax, 4
-    int 0x80
+    call user_write_dec
 
-    mov eax, 1
-    mov ebx, clock_ticks
-    int 0x80
+    mov ecx, clock_ticks
+    mov edx, clock_ticks_len
+    call user_write
 
-    mov eax, 6
-    int 0x80
+    call user_ticks
     mov ebx, eax
-    mov eax, 4
-    int 0x80
+    call user_write_dec
 
-    mov eax, 2
     xor ebx, ebx
-    int 0x80
-
-.halt:
-    jmp .halt
+    call user_exit
 
 section .user_rodata
-clock_title db "Clock app", 0
-clock_pid db "pid:", 0
-clock_ticks db "ticks:", 0
+clock_title db "[clock] Clock app", 10
+clock_title_len equ $ - clock_title
+clock_pid db "[clock] pid:", 10
+clock_pid_len equ $ - clock_pid
+clock_ticks db "[clock] ticks:", 10
+clock_ticks_len equ $ - clock_ticks
 
 section .note.GNU-stack noalloc noexec nowrite progbits
