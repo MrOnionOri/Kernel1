@@ -25,6 +25,8 @@ enum vga_color {
 void terminal_initialize(void);
 void terminal_set_color(enum vga_color foreground, enum vga_color background);
 void terminal_ensure_rows(uint32_t rows);
+void terminal_cursor_left(void);
+void terminal_cursor_right(void);
 void terminal_putchar(char character);
 void terminal_backspace(void);
 void terminal_write(const char* text);

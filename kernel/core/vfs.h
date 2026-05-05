@@ -9,8 +9,16 @@ int vfs_open(const char* path);
 int32_t vfs_read(int fd, char* buffer, uint32_t size);
 void vfs_close(int fd);
 int vfs_complete_path(const char* prefix, char* output, uint32_t size);
+int vfs_is_directory(const char* path);
+int vfs_mkdir(const char* path);
+int vfs_write_text(const char* path, const char* text);
+int vfs_copy(const char* source_path, const char* destination_path);
+int vfs_move(const char* source_path, const char* destination_path);
+int vfs_remove(const char* path);
 void vfs_list(void);
 void vfs_list_path(const char* path);
 void vfs_cat(const char* path);
+void vfs_stat(const char* path);
+void vfs_tree(const char* path);
 
 #endif

@@ -9,7 +9,12 @@
 #define SCANCODE_CAPS_LOCK 0x3A
 #define SCANCODE_EXTENDED 0xE0
 #define SCANCODE_ARROW_UP 0x48
+#define SCANCODE_ARROW_LEFT 0x4B
+#define SCANCODE_ARROW_RIGHT 0x4D
 #define SCANCODE_ARROW_DOWN 0x50
+#define SCANCODE_HOME 0x47
+#define SCANCODE_END 0x4F
+#define SCANCODE_DELETE 0x53
 
 static int shift_pressed;
 static int caps_lock_enabled;
@@ -68,6 +73,16 @@ void keyboard_handle_irq(void) {
             shell_history_previous();
         } else if (scancode == SCANCODE_ARROW_DOWN) {
             shell_history_next();
+        } else if (scancode == SCANCODE_ARROW_LEFT) {
+            shell_cursor_left();
+        } else if (scancode == SCANCODE_ARROW_RIGHT) {
+            shell_cursor_right();
+        } else if (scancode == SCANCODE_HOME) {
+            shell_cursor_home();
+        } else if (scancode == SCANCODE_END) {
+            shell_cursor_end();
+        } else if (scancode == SCANCODE_DELETE) {
+            shell_delete_char();
         }
 
         return;

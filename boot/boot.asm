@@ -7,7 +7,7 @@
 
 KERNEL_OFFSET equ 0x10000
 KERNEL_LOAD_SEGMENT equ 0x1000
-KERNEL_SECTORS equ 112
+KERNEL_SECTORS equ 136
 KERNEL_READ_CHUNK equ 8
 MEMORY_MAP_ADDR equ 0x9000
 MEMORY_MAP_ENTRIES equ MEMORY_MAP_ADDR + 4
@@ -78,7 +78,10 @@ load_kernel:
 
     shl ax, 9
     add [dap_buffer_offset], ax
+    jnc .advance_lba
+    add word [dap_buffer_segment], 0x1000
 
+.advance_lba:
     mov ax, [dap_sector_count]
     add [dap_start_lba], ax
     jmp .next_chunk

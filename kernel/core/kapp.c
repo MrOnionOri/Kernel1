@@ -119,7 +119,7 @@ void kapp_inspect(const char* path) {
     terminal_write("  status=loadable candidate\n");
 }
 
-int kapp_spawn_app(const char* name, const char* args) {
+struct task* kapp_spawn_app(const char* name, const char* args) {
     char path[48];
     struct initrd_file file;
     uint32_t header_size;
@@ -180,7 +180,7 @@ int kapp_spawn_app(const char* name, const char* args) {
     terminal_write(" KAPP task ");
     terminal_write_dec(task->id);
     terminal_write("\n");
-    return 1;
+    return task;
 }
 
 int kapp_exists(const char* name) {

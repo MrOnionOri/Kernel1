@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#define INITRD_ADDRESS 0x0001C000
+#define INITRD_ADDRESS 0x0001F000
 #define INITRD_SIZE 8192
 
 static const char initrd_magic[] = "K1RD2";

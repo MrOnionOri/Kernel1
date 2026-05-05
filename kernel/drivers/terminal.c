@@ -102,6 +102,36 @@ void terminal_ensure_rows(uint32_t rows) {
     }
 }
 
+void terminal_cursor_left(void) {
+    if (cursor_col == 0) {
+        if (cursor_row == 0) {
+            return;
+        }
+
+        cursor_row--;
+        cursor_col = VGA_WIDTH - 1;
+    } else {
+        cursor_col--;
+    }
+
+    terminal_update_cursor();
+}
+
+void terminal_cursor_right(void) {
+    cursor_col++;
+
+    if (cursor_col >= VGA_WIDTH) {
+        cursor_col = 0;
+        cursor_row++;
+    }
+
+    if (cursor_row >= VGA_HEIGHT) {
+        terminal_scroll();
+    }
+
+    terminal_update_cursor();
+}
+
 void terminal_putchar(char character) {
     if (character == '\n') {
         cursor_col = 0;

@@ -55,17 +55,17 @@ static int prepare_user_test_memory(uint32_t user_stack_top) {
     return 1;
 }
 
-void user_mode_spawn_app_with_args(const char* name, uint32_t entry, const char* args) {
+struct task* user_mode_spawn_app_with_args(const char* name, uint32_t entry, const char* args) {
     uint32_t stack_top = USER_STACK_BASE + ((uint32_t)task_next_id() * USER_STACK_STRIDE);
 
     if (!prepare_user_test_memory(stack_top)) {
-        return;
+        return 0;
     }
 
     struct task* task = task_create_user_with_args(name, entry, stack_top, args);
     if (task == 0) {
         terminal_write("spawn failed: no task slot\n");
-        return;
+        return 0;
     }
 
     terminal_write("Spawned ");
@@ -77,10 +77,11 @@ void user_mode_spawn_app_with_args(const char* name, uint32_t entry, const char*
         terminal_write(args);
     }
     terminal_write("\n");
+    return task;
 }
 
-void user_mode_spawn_app(const char* name, uint32_t entry) {
-    user_mode_spawn_app_with_args(name, entry, "");
+struct task* user_mode_spawn_app(const char* name, uint32_t entry) {
+    return user_mode_spawn_app_with_args(name, entry, "");
 }
 
 void user_mode_spawn_test(void) {

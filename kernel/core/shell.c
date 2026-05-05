@@ -21,6 +21,7 @@
 
 static char command_buffer[COMMAND_BUFFER_SIZE];
 static size_t command_length;
+static size_t command_cursor;
 static int command_pending;
 static char command_history[COMMAND_HISTORY_SIZE][COMMAND_BUFFER_SIZE];
 static size_t command_history_count;
@@ -35,6 +36,7 @@ static const char* shell_commands[] = {
     "cat",
     "cd",
     "clear",
+    "cp",
     "gdt",
     "heap",
     "help",
@@ -43,18 +45,24 @@ static const char* shell_commands[] = {
     "kmalloc",
     "ls",
     "mem",
+    "mkdir",
+    "mv",
     "paging",
     "pmm",
     "pwd",
     "ring3",
     "run",
     "runall",
+    "rm",
     "spawn",
+    "stat",
     "tasks",
     "tasksv",
     "ticks",
+    "tree",
     "vmmtest",
     "which",
+    "write",
 };
 
 static int string_equals(const char* left, const char* right) {
@@ -97,6 +105,7 @@ static void shell_clear_buffer(void) {
     }
 
     command_length = 0;
+    command_cursor = 0;
 }
 
 static void string_copy(char* destination, const char* source, size_t size) {
@@ -161,8 +170,18 @@ static void shell_change_directory(const char* path) {
         return;
     }
 
-    if (string_equals(path, "apps") || string_equals(path, "/apps")) {
-        string_copy(current_directory, "apps", sizeof(current_directory));
+    char resolved[SHELL_PATH_SIZE];
+    shell_resolve_path(path, resolved, sizeof(resolved));
+
+    if (vfs_is_directory(resolved)) {
+        if (string_equals(resolved, "/")) {
+            current_directory[0] = '\0';
+        } else if (resolved[0] == '/') {
+            string_copy(current_directory, resolved + 1, sizeof(current_directory));
+        } else {
+            string_copy(current_directory, resolved, sizeof(current_directory));
+        }
+
         return;
     }
 
@@ -172,6 +191,11 @@ static void shell_change_directory(const char* path) {
 }
 
 static void shell_replace_buffer(const char* text) {
+    while (command_cursor < command_length) {
+        terminal_cursor_right();
+        command_cursor++;
+    }
+
     while (command_length > 0) {
         command_length--;
         command_buffer[command_length] = '\0';
@@ -185,6 +209,69 @@ static void shell_replace_buffer(const char* text) {
         terminal_putchar(command_buffer[command_length]);
         command_length++;
     }
+
+    command_cursor = command_length;
+}
+
+static void shell_redraw_from_cursor(int erase_extra) {
+    size_t start = command_cursor;
+    size_t printed = 0;
+
+    for (size_t i = start; i < command_length; i++) {
+        terminal_putchar(command_buffer[i]);
+        printed++;
+    }
+
+    if (erase_extra) {
+        terminal_putchar(' ');
+        printed++;
+    }
+
+    while (printed > 0) {
+        terminal_cursor_left();
+        printed--;
+    }
+}
+
+static void shell_insert_char(char character) {
+    if (command_length >= COMMAND_BUFFER_SIZE - 1) {
+        return;
+    }
+
+    if (command_cursor == command_length) {
+        command_buffer[command_length++] = character;
+        command_buffer[command_length] = '\0';
+        command_cursor = command_length;
+        terminal_putchar(character);
+        return;
+    }
+
+    for (size_t i = command_length; i > command_cursor; i--) {
+        command_buffer[i] = command_buffer[i - 1];
+    }
+
+    command_buffer[command_cursor] = character;
+    command_length++;
+    command_buffer[command_length] = '\0';
+    shell_redraw_from_cursor(0);
+    terminal_cursor_right();
+    command_cursor++;
+}
+
+static void shell_backspace_char(void) {
+    if (command_cursor == 0) {
+        return;
+    }
+
+    command_cursor--;
+
+    for (size_t i = command_cursor; i < command_length; i++) {
+        command_buffer[i] = command_buffer[i + 1];
+    }
+
+    command_length--;
+    terminal_cursor_left();
+    shell_redraw_from_cursor(1);
 }
 
 static void shell_history_add(const char* command) {
@@ -271,7 +358,7 @@ static int shell_complete_path_command(const char* command_prefix) {
     return 1;
 }
 
-static int shell_spawn_app_text(const char* app_text) {
+static struct task* shell_spawn_app_text(const char* app_text) {
     app_text = skip_spaces(app_text);
 
     char app_name[24];
@@ -301,13 +388,13 @@ static int shell_spawn_app_text(const char* app_text) {
             return 0;
         }
 
-        user_mode_spawn_app_with_args(app->name, app->entry, args);
-        return 1;
+        return user_mode_spawn_app_with_args(app->name, app->entry, args);
     }
 
     if (kind == APP_KIND_KAPP) {
-        if (kapp_spawn_app(app_name, args)) {
-            return 1;
+        struct task* task = kapp_spawn_app(app_name, args);
+        if (task != 0) {
+            return task;
         }
 
         terminal_write("KAPP app failed: ");
@@ -317,18 +404,26 @@ static int shell_spawn_app_text(const char* app_text) {
     }
 
     if (app != 0) {
-        user_mode_spawn_app_with_args(app->name, app->entry, args);
-        return 1;
+        return user_mode_spawn_app_with_args(app->name, app->entry, args);
     }
 
-    if (kapp_spawn_app(app_name, args)) {
-        return 1;
+    struct task* task = kapp_spawn_app(app_name, args);
+    if (task != 0) {
+        return task;
     }
 
     terminal_write("Unknown app: ");
     terminal_write(app_name);
     terminal_write("\n");
     return 0;
+}
+
+static void shell_run_foreground(struct task* task) {
+    terminal_ensure_rows(6);
+
+    while (task != 0 && task->state == TASK_READY) {
+        task_run(task);
+    }
 }
 
 static int shell_complete_app_command(const char* command_prefix) {
@@ -371,7 +466,7 @@ static void shell_execute_command(void) {
     shell_history_add(command_buffer);
 
     if (string_equals(command_buffer, "help")) {
-        terminal_write("Commands: help, clear, pwd, cd <dir>, ls, ls <dir>, cat <file>, kapp <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, initrd ls, initrd cat <file>, spawn <app>, run <app>, runall, tasks, tasksv, about\n");
+        terminal_write("Commands: help, clear, pwd, cd <dir>, ls, tree, cat <file>, stat <path>, cp <src> <dst>, mv <src> <dst>, mkdir <dir>, write <file> <text>, rm <path>, kapp <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, spawn <app>, run <app>, runall, tasks, tasksv, about\n");
     } else if (string_equals(command_buffer, "clear")) {
         terminal_initialize();
         terminal_write("Kernel1 shell\n");
@@ -387,10 +482,136 @@ static void shell_execute_command(void) {
         char path[SHELL_PATH_SIZE];
         shell_resolve_path(command_buffer + 3, path, sizeof(path));
         vfs_list_path(path);
+    } else if (string_equals(command_buffer, "tree")) {
+        vfs_tree(current_directory);
+    } else if (string_starts_with(command_buffer, "tree ")) {
+        char path[SHELL_PATH_SIZE];
+        shell_resolve_path(skip_spaces(command_buffer + 5), path, sizeof(path));
+        vfs_tree(path);
     } else if (string_starts_with(command_buffer, "cat ")) {
         char path[SHELL_PATH_SIZE];
         shell_resolve_path(command_buffer + 4, path, sizeof(path));
         vfs_cat(path);
+    } else if (string_starts_with(command_buffer, "stat ")) {
+        char path[SHELL_PATH_SIZE];
+        shell_resolve_path(skip_spaces(command_buffer + 5), path, sizeof(path));
+        vfs_stat(path);
+    } else if (string_starts_with(command_buffer, "cp ")) {
+        const char* text = skip_spaces(command_buffer + 3);
+        char source[SHELL_PATH_SIZE];
+        char destination[SHELL_PATH_SIZE];
+        char resolved_source[SHELL_PATH_SIZE];
+        char resolved_destination[SHELL_PATH_SIZE];
+        size_t index = 0;
+
+        while (index < sizeof(source) - 1 && text[index] != '\0' && text[index] != ' ') {
+            source[index] = text[index];
+            index++;
+        }
+
+        source[index] = '\0';
+        text = skip_spaces(text + index);
+        index = 0;
+
+        while (index < sizeof(destination) - 1 && text[index] != '\0' && text[index] != ' ') {
+            destination[index] = text[index];
+            index++;
+        }
+
+        destination[index] = '\0';
+
+        if (source[0] == '\0' || destination[0] == '\0') {
+            terminal_write("cp: usage cp <src> <dst>\n");
+        } else {
+            shell_resolve_path(source, resolved_source, sizeof(resolved_source));
+            shell_resolve_path(destination, resolved_destination, sizeof(resolved_destination));
+
+            if (vfs_copy(resolved_source, resolved_destination)) {
+                terminal_write("Copied ");
+                terminal_write(resolved_source);
+                terminal_write(" -> ");
+                terminal_write(resolved_destination);
+                terminal_write("\n");
+            }
+        }
+    } else if (string_starts_with(command_buffer, "mv ")) {
+        const char* text = skip_spaces(command_buffer + 3);
+        char source[SHELL_PATH_SIZE];
+        char destination[SHELL_PATH_SIZE];
+        char resolved_source[SHELL_PATH_SIZE];
+        char resolved_destination[SHELL_PATH_SIZE];
+        size_t index = 0;
+
+        while (index < sizeof(source) - 1 && text[index] != '\0' && text[index] != ' ') {
+            source[index] = text[index];
+            index++;
+        }
+
+        source[index] = '\0';
+        text = skip_spaces(text + index);
+        index = 0;
+
+        while (index < sizeof(destination) - 1 && text[index] != '\0' && text[index] != ' ') {
+            destination[index] = text[index];
+            index++;
+        }
+
+        destination[index] = '\0';
+
+        if (source[0] == '\0' || destination[0] == '\0') {
+            terminal_write("mv: usage mv <src> <dst>\n");
+        } else {
+            shell_resolve_path(source, resolved_source, sizeof(resolved_source));
+            shell_resolve_path(destination, resolved_destination, sizeof(resolved_destination));
+
+            if (vfs_move(resolved_source, resolved_destination)) {
+                terminal_write("Moved ");
+                terminal_write(resolved_source);
+                terminal_write(" -> ");
+                terminal_write(resolved_destination);
+                terminal_write("\n");
+            }
+        }
+    } else if (string_starts_with(command_buffer, "mkdir ")) {
+        char path[SHELL_PATH_SIZE];
+        shell_resolve_path(skip_spaces(command_buffer + 6), path, sizeof(path));
+        if (vfs_mkdir(path)) {
+            terminal_write("Created directory: ");
+            terminal_write(path);
+            terminal_write("\n");
+        }
+    } else if (string_starts_with(command_buffer, "write ")) {
+        const char* text = skip_spaces(command_buffer + 6);
+        char path[SHELL_PATH_SIZE];
+        size_t index = 0;
+
+        while (index < sizeof(path) - 1 && text[index] != '\0' && text[index] != ' ') {
+            path[index] = text[index];
+            index++;
+        }
+
+        path[index] = '\0';
+        text = skip_spaces(text + index);
+
+        if (path[0] == '\0') {
+            terminal_write("write: missing path\n");
+        } else {
+            char resolved[SHELL_PATH_SIZE];
+            shell_resolve_path(path, resolved, sizeof(resolved));
+            if (vfs_write_text(resolved, text)) {
+                terminal_write("Wrote ");
+                terminal_write(resolved);
+                terminal_write("\n");
+            }
+        }
+    } else if (string_starts_with(command_buffer, "rm ")) {
+        char path[SHELL_PATH_SIZE];
+        shell_resolve_path(skip_spaces(command_buffer + 3), path, sizeof(path));
+        if (vfs_remove(path)) {
+            terminal_write("Removed: ");
+            terminal_write(path);
+            terminal_write("\n");
+        }
     } else if (string_starts_with(command_buffer, "kapp ")) {
         char path[SHELL_PATH_SIZE];
         shell_resolve_path(command_buffer + 5, path, sizeof(path));
@@ -460,12 +681,7 @@ static void shell_execute_command(void) {
     } else if (string_starts_with(command_buffer, "spawn ")) {
         shell_spawn_app_text(command_buffer + 6);
     } else if (string_starts_with(command_buffer, "run ")) {
-        if (shell_spawn_app_text(command_buffer + 4)) {
-            terminal_ensure_rows(6);
-            if (task_has_ready()) {
-                task_run_all_ready();
-            }
-        }
+        shell_run_foreground(shell_spawn_app_text(command_buffer + 4));
     } else if (string_equals(command_buffer, "runall")) {
         terminal_ensure_rows(6);
         if (task_has_ready()) {
@@ -504,27 +720,65 @@ void shell_put_char(char character) {
     }
 
     if (character == '\n') {
+        while (command_cursor < command_length) {
+            terminal_cursor_right();
+            command_cursor++;
+        }
+
         terminal_putchar('\n');
         command_pending = 1;
         return;
     }
 
     if (character == '\b') {
-        if (command_length > 0) {
-            command_length--;
-            command_buffer[command_length] = '\0';
-            terminal_backspace();
-        }
-
+        shell_backspace_char();
         return;
     }
 
-    if (command_length >= COMMAND_BUFFER_SIZE - 1) {
+    shell_insert_char(character);
+}
+
+void shell_cursor_left(void) {
+    if (command_pending || command_cursor == 0) {
         return;
     }
 
-    command_buffer[command_length++] = character;
-    terminal_putchar(character);
+    command_cursor--;
+    terminal_cursor_left();
+}
+
+void shell_cursor_right(void) {
+    if (command_pending || command_cursor >= command_length) {
+        return;
+    }
+
+    command_cursor++;
+    terminal_cursor_right();
+}
+
+void shell_cursor_home(void) {
+    while (!command_pending && command_cursor > 0) {
+        shell_cursor_left();
+    }
+}
+
+void shell_cursor_end(void) {
+    while (!command_pending && command_cursor < command_length) {
+        shell_cursor_right();
+    }
+}
+
+void shell_delete_char(void) {
+    if (command_pending || command_cursor >= command_length) {
+        return;
+    }
+
+    for (size_t i = command_cursor; i < command_length; i++) {
+        command_buffer[i] = command_buffer[i + 1];
+    }
+
+    command_length--;
+    shell_redraw_from_cursor(1);
 }
 
 void shell_complete(void) {
@@ -535,9 +789,14 @@ void shell_complete(void) {
     command_buffer[command_length] = '\0';
 
     if (shell_complete_path_command("cat ") ||
+            shell_complete_path_command("cp ") ||
             shell_complete_path_command("kapp ") ||
             shell_complete_path_command("ls ") ||
             shell_complete_path_command("cd ") ||
+            shell_complete_path_command("mv ") ||
+            shell_complete_path_command("rm ") ||
+            shell_complete_path_command("stat ") ||
+            shell_complete_path_command("tree ") ||
             shell_complete_path_command("initrd cat ")) {
         return;
     }
