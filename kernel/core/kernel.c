@@ -34,6 +34,7 @@ void kernel_main(void) {
     arch_enable_interrupts();
 
     for (;;) {
+        shell_poll();
         arch_halt();
     }
 }

@@ -2,9 +2,11 @@
 
 #include "context.h"
 #include "arch.h"
+#include "heap.h"
 #include "terminal.h"
 
 #define MAX_TASKS 8
+#define TASK_KERNEL_STACK_SIZE 4096
 
 static struct task tasks[MAX_TASKS];
 static struct task* current_task;
@@ -34,9 +36,11 @@ void task_initialize(void) {
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         tasks[i].id = 0;
+        tasks[i].name = "";
         tasks[i].state = TASK_UNUSED;
         tasks[i].entry = 0;
         tasks[i].user_stack_top = 0;
+        tasks[i].kernel_stack_top = 0;
         tasks[i].exit_code = 0;
         tasks[i].yields = 0;
     }
@@ -46,13 +50,24 @@ uint32_t task_next_id(void) {
     return next_task_id;
 }
 
-struct task* task_create_user(uint32_t entry, uint32_t user_stack_top) {
+uint32_t task_current_id(void) {
+    return current_task == 0 ? 0 : current_task->id;
+}
+
+struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t user_stack_top) {
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (tasks[i].state == TASK_UNUSED || tasks[i].state == TASK_EXITED) {
+            void* kernel_stack = kmalloc_aligned(TASK_KERNEL_STACK_SIZE, 16);
+            if (kernel_stack == 0) {
+                return 0;
+            }
+
             tasks[i].id = next_task_id++;
+            tasks[i].name = name == 0 ? "user" : name;
             tasks[i].state = TASK_READY;
             tasks[i].entry = entry;
             tasks[i].user_stack_top = user_stack_top;
+            tasks[i].kernel_stack_top = (uint32_t)kernel_stack + TASK_KERNEL_STACK_SIZE;
             tasks[i].exit_code = 0;
             tasks[i].yields = 0;
             return &tasks[i];
@@ -62,11 +77,16 @@ struct task* task_create_user(uint32_t entry, uint32_t user_stack_top) {
     return 0;
 }
 
+struct task* task_create_user(uint32_t entry, uint32_t user_stack_top) {
+    return task_create_user_named("user", entry, user_stack_top);
+}
+
 static void task_run_internal(struct task* task, int print_shell_return) {
     current_task = task;
     task->state = TASK_RUNNING;
 
     if (context_save(&scheduler_context) == 0) {
+        arch_set_kernel_stack(task->kernel_stack_top);
         arch_enter_user_mode(task->entry, task->user_stack_top);
     }
 
@@ -75,6 +95,8 @@ static void task_run_internal(struct task* task, int print_shell_return) {
     terminal_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     terminal_write(print_shell_return ? "Back in kernel shell. Task " : "Task ");
     terminal_write_dec(returned_task->id);
+    terminal_write(" ");
+    terminal_write(returned_task->name);
     if (returned_task->state == TASK_EXITED) {
         terminal_write(" exit code ");
         terminal_write_dec(returned_task->exit_code);
@@ -97,37 +119,31 @@ void task_run(struct task* task) {
     task_run_internal(task, 1);
 }
 
+int task_has_ready(void) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state == TASK_READY) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 void task_run_all_ready(void) {
-    uint32_t ran = 0;
     uint32_t start_cursor = scheduler_cursor;
 
-    for (uint32_t round = 0; round < MAX_TASKS; round++) {
-        struct task* next = 0;
-        uint32_t next_index = 0;
+    for (uint32_t scan = 0; scan < MAX_TASKS; scan++) {
+        uint32_t i = (scheduler_cursor + scan) % MAX_TASKS;
 
-        for (uint32_t scan = 0; scan < MAX_TASKS; scan++) {
-            uint32_t i = (scheduler_cursor + scan) % MAX_TASKS;
-
-            if (tasks[i].state == TASK_READY) {
-                next = &tasks[i];
-                next_index = i;
-                break;
-            }
+        if (tasks[i].state == TASK_READY) {
+            scheduler_cursor = (i + 1) % MAX_TASKS;
+            task_run_internal(&tasks[i], 0);
+            return;
         }
-
-        if (next == 0) {
-            scheduler_cursor = start_cursor;
-            break;
-        }
-
-        scheduler_cursor = (next_index + 1) % MAX_TASKS;
-        task_run_internal(next, 0);
-        ran++;
     }
 
-    if (ran == 0) {
-        terminal_write("No READY tasks\n");
-    }
+    scheduler_cursor = start_cursor;
+    terminal_write("No READY tasks\n");
 }
 
 void task_exit_current(uint32_t exit_code) {
@@ -169,12 +185,40 @@ void task_print_all(void) {
 
         terminal_write("  id=");
         terminal_write_dec(tasks[i].id);
+        terminal_write(" ");
+        terminal_write(tasks[i].name);
+        terminal_write(" ");
+        terminal_write(task_state_name(tasks[i].state));
+        terminal_write(" ustack=");
+        terminal_write_hex(tasks[i].user_stack_top);
+        terminal_write(" exit=");
+        terminal_write_dec(tasks[i].exit_code);
+        terminal_write(" y=");
+        terminal_write_dec(tasks[i].yields);
+        terminal_write("\n");
+    }
+}
+
+void task_print_all_verbose(void) {
+    terminal_write("Tasks verbose:\n");
+
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state == TASK_UNUSED) {
+            continue;
+        }
+
+        terminal_write("  id=");
+        terminal_write_dec(tasks[i].id);
+        terminal_write(" name=");
+        terminal_write(tasks[i].name);
         terminal_write(" state=");
         terminal_write(task_state_name(tasks[i].state));
-        terminal_write(" entry=");
+        terminal_write("\n    entry=");
         terminal_write_hex(tasks[i].entry);
-        terminal_write(" stack=");
+        terminal_write(" ustack=");
         terminal_write_hex(tasks[i].user_stack_top);
+        terminal_write("\n    kstack=");
+        terminal_write_hex(tasks[i].kernel_stack_top);
         terminal_write(" exit=");
         terminal_write_dec(tasks[i].exit_code);
         terminal_write(" yields=");

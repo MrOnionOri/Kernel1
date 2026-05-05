@@ -14,22 +14,28 @@ enum task_state {
 
 struct task {
     uint32_t id;
+    const char* name;
     enum task_state state;
     uint32_t entry;
     uint32_t user_stack_top;
+    uint32_t kernel_stack_top;
     uint32_t exit_code;
     uint32_t yields;
 };
 
 void task_initialize(void);
 uint32_t task_next_id(void);
+uint32_t task_current_id(void);
 struct task* task_create_user(uint32_t entry, uint32_t user_stack_top);
+struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t user_stack_top);
 void task_run(struct task* task);
 void task_run_all_ready(void);
+int task_has_ready(void);
 void task_exit_current(uint32_t exit_code);
 void task_yield_current(struct interrupt_frame* frame);
 void task_prepare_exit_return(struct interrupt_frame* frame, uint32_t exit_code);
 void task_prepare_yield_return(struct interrupt_frame* frame);
 void task_print_all(void);
+void task_print_all_verbose(void);
 
 #endif

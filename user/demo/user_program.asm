@@ -8,16 +8,20 @@ user_test:
     mov ebx, user_message_1
     int 0x80
 
-    mov eax, 3
-    xor ebx, ebx
+    mov eax, 5
+    int 0x80
+    mov ebx, eax
+    mov eax, 4
+    int 0x80
+
+    mov eax, 6
+    int 0x80
+    mov ebx, eax
+    mov eax, 4
     int 0x80
 
     mov eax, 1
     mov ebx, user_message_2
-    int 0x80
-
-    mov eax, 3
-    xor ebx, ebx
     int 0x80
 
     mov eax, 1

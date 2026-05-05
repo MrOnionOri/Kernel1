@@ -7,9 +7,13 @@
 #define SCANCODE_LEFT_SHIFT 0x2A
 #define SCANCODE_RIGHT_SHIFT 0x36
 #define SCANCODE_CAPS_LOCK 0x3A
+#define SCANCODE_EXTENDED 0xE0
+#define SCANCODE_ARROW_UP 0x48
+#define SCANCODE_ARROW_DOWN 0x50
 
 static int shift_pressed;
 static int caps_lock_enabled;
+static int extended_scancode;
 
 static const char scancode_ascii_lower[128] = {
     0,  27, '1', '2', '3', '4', '5', '6',
@@ -41,11 +45,33 @@ static int is_letter_scancode(uint8_t scancode) {
 void keyboard_initialize(void) {
     shift_pressed = 0;
     caps_lock_enabled = 0;
+    extended_scancode = 0;
 }
 
 void keyboard_handle_irq(void) {
     uint8_t scancode = inb(KEYBOARD_DATA_PORT);
     uint8_t pressed_scancode = scancode & 0x7F;
+
+    if (scancode == SCANCODE_EXTENDED) {
+        extended_scancode = 1;
+        return;
+    }
+
+    if (extended_scancode) {
+        extended_scancode = 0;
+
+        if (scancode & 0x80) {
+            return;
+        }
+
+        if (scancode == SCANCODE_ARROW_UP) {
+            shell_history_previous();
+        } else if (scancode == SCANCODE_ARROW_DOWN) {
+            shell_history_next();
+        }
+
+        return;
+    }
 
     if (scancode & 0x80) {
         if (pressed_scancode == SCANCODE_LEFT_SHIFT || pressed_scancode == SCANCODE_RIGHT_SHIFT) {
@@ -62,6 +88,11 @@ void keyboard_handle_irq(void) {
 
     if (scancode == SCANCODE_CAPS_LOCK) {
         caps_lock_enabled = !caps_lock_enabled;
+        return;
+    }
+
+    if (scancode < sizeof(scancode_ascii_lower) && scancode_ascii_lower[scancode] == '\t') {
+        shell_complete();
         return;
     }
 

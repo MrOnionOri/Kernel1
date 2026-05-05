@@ -55,22 +55,28 @@ static int prepare_user_test_memory(uint32_t user_stack_top) {
     return 1;
 }
 
-void user_mode_spawn_test(void) {
+void user_mode_spawn_app(const char* name, uint32_t entry) {
     uint32_t stack_top = USER_STACK_BASE + ((uint32_t)task_next_id() * USER_STACK_STRIDE);
 
     if (!prepare_user_test_memory(stack_top)) {
         return;
     }
 
-    struct task* task = task_create_user((uint32_t)user_test, stack_top);
+    struct task* task = task_create_user_named(name, entry, stack_top);
     if (task == 0) {
         terminal_write("spawn failed: no task slot\n");
         return;
     }
 
-    terminal_write("Spawned user task ");
+    terminal_write("Spawned ");
+    terminal_write(name);
+    terminal_write(" task ");
     terminal_write_dec(task->id);
     terminal_write("\n");
+}
+
+void user_mode_spawn_test(void) {
+    user_mode_spawn_app("demo", (uint32_t)user_test);
 }
 
 void user_mode_enter_test(void) {
@@ -82,7 +88,7 @@ void user_mode_enter_test(void) {
 
     arch_set_kernel_stack(0x90000);
 
-    struct task* task = task_create_user((uint32_t)user_test, stack_top);
+    struct task* task = task_create_user_named("demo", (uint32_t)user_test, stack_top);
     if (task == 0) {
         terminal_write("ring3 failed: no task slot\n");
         return;

@@ -1,5 +1,6 @@
 #include "shell.h"
 
+#include "app.h"
 #include "arch.h"
 #include "heap.h"
 #include "memory_map.h"
@@ -12,9 +13,35 @@
 #include <stddef.h>
 
 #define COMMAND_BUFFER_SIZE 80
+#define COMMAND_HISTORY_SIZE 8
 
 static char command_buffer[COMMAND_BUFFER_SIZE];
 static size_t command_length;
+static int command_pending;
+static char command_history[COMMAND_HISTORY_SIZE][COMMAND_BUFFER_SIZE];
+static size_t command_history_count;
+static size_t command_history_view;
+
+static const char* shell_commands[] = {
+    "about",
+    "alloc",
+    "apps",
+    "clear",
+    "gdt",
+    "heap",
+    "help",
+    "kmalloc",
+    "mem",
+    "paging",
+    "pmm",
+    "ring3",
+    "runall",
+    "spawn",
+    "tasks",
+    "tasksv",
+    "ticks",
+    "vmmtest",
+};
 
 static int string_equals(const char* left, const char* right) {
     size_t index = 0;
@@ -28,6 +55,20 @@ static int string_equals(const char* left, const char* right) {
     }
 
     return left[index] == right[index];
+}
+
+static int string_starts_with(const char* text, const char* prefix) {
+    size_t index = 0;
+
+    while (prefix[index] != '\0') {
+        if (text[index] != prefix[index]) {
+            return 0;
+        }
+
+        index++;
+    }
+
+    return 1;
 }
 
 static void shell_prompt(void) {
@@ -44,6 +85,71 @@ static void shell_clear_buffer(void) {
     command_length = 0;
 }
 
+static void string_copy(char* destination, const char* source, size_t size) {
+    size_t index = 0;
+
+    if (size == 0) {
+        return;
+    }
+
+    while (index < size - 1 && source[index] != '\0') {
+        destination[index] = source[index];
+        index++;
+    }
+
+    destination[index] = '\0';
+}
+
+static void shell_replace_buffer(const char* text) {
+    while (command_length > 0) {
+        command_length--;
+        command_buffer[command_length] = '\0';
+        terminal_backspace();
+    }
+
+    string_copy(command_buffer, text, COMMAND_BUFFER_SIZE);
+    command_length = 0;
+
+    while (command_buffer[command_length] != '\0') {
+        terminal_putchar(command_buffer[command_length]);
+        command_length++;
+    }
+}
+
+static void shell_history_add(const char* command) {
+    if (command[0] == '\0') {
+        return;
+    }
+
+    if (command_history_count > 0 &&
+            string_equals(command_history[(command_history_count - 1) % COMMAND_HISTORY_SIZE], command)) {
+        command_history_view = command_history_count;
+        return;
+    }
+
+    string_copy(command_history[command_history_count % COMMAND_HISTORY_SIZE], command, COMMAND_BUFFER_SIZE);
+    command_history_count++;
+    command_history_view = command_history_count;
+}
+
+static const char* shell_find_command_prefix(const char* prefix) {
+    const char* match = 0;
+
+    for (size_t i = 0; i < sizeof(shell_commands) / sizeof(shell_commands[0]); i++) {
+        if (!string_starts_with(shell_commands[i], prefix)) {
+            continue;
+        }
+
+        if (match != 0) {
+            return 0;
+        }
+
+        match = shell_commands[i];
+    }
+
+    return match;
+}
+
 static void shell_execute_command(void) {
     command_buffer[command_length] = '\0';
 
@@ -51,8 +157,10 @@ static void shell_execute_command(void) {
         return;
     }
 
+    shell_history_add(command_buffer);
+
     if (string_equals(command_buffer, "help")) {
-        terminal_write("Commands: help, clear, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, spawn, runall, tasks, about\n");
+        terminal_write("Commands: help, clear, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, spawn, spawn demo, runall, tasks, tasksv, about\n");
     } else if (string_equals(command_buffer, "clear")) {
         terminal_initialize();
         terminal_write("Kernel1 shell\n");
@@ -104,12 +212,34 @@ static void shell_execute_command(void) {
         arch_print_status();
     } else if (string_equals(command_buffer, "ring3")) {
         user_mode_enter_test();
+    } else if (string_equals(command_buffer, "apps")) {
+        app_print_all();
     } else if (string_equals(command_buffer, "spawn")) {
         user_mode_spawn_test();
+    } else if (string_starts_with(command_buffer, "spawn ")) {
+        const char* app_name = command_buffer + 6;
+        const struct app_descriptor* app = app_find(app_name);
+
+        if (app == 0) {
+            terminal_write("Unknown app: ");
+            terminal_write(app_name);
+            terminal_write("\n");
+        } else {
+            user_mode_spawn_app(app->name, app->entry);
+        }
     } else if (string_equals(command_buffer, "runall")) {
-        task_run_all_ready();
+        terminal_ensure_rows(6);
+        if (task_has_ready()) {
+            task_run_all_ready();
+        } else {
+            terminal_write("No READY tasks\n");
+        }
     } else if (string_equals(command_buffer, "tasks")) {
+        terminal_ensure_rows(10);
         task_print_all();
+    } else if (string_equals(command_buffer, "tasksv")) {
+        terminal_ensure_rows(14);
+        task_print_all_verbose();
     } else if (string_equals(command_buffer, "about")) {
         terminal_write("Kernel1: 32-bit educational kernel in ASM + C.\n");
     } else {
@@ -121,16 +251,21 @@ static void shell_execute_command(void) {
 
 void shell_initialize(void) {
     shell_clear_buffer();
+    command_pending = 0;
+    command_history_count = 0;
+    command_history_view = 0;
     terminal_write("Type 'help' for commands.\n");
     shell_prompt();
 }
 
 void shell_put_char(char character) {
+    if (command_pending) {
+        return;
+    }
+
     if (character == '\n') {
         terminal_putchar('\n');
-        shell_execute_command();
-        shell_clear_buffer();
-        shell_prompt();
+        command_pending = 1;
         return;
     }
 
@@ -150,4 +285,71 @@ void shell_put_char(char character) {
 
     command_buffer[command_length++] = character;
     terminal_putchar(character);
+}
+
+void shell_complete(void) {
+    if (command_pending || command_length == 0) {
+        return;
+    }
+
+    command_buffer[command_length] = '\0';
+
+    if (string_starts_with(command_buffer, "spawn ")) {
+        const char* app_prefix = command_buffer + 6;
+        const struct app_descriptor* app = app_find_prefix(app_prefix);
+
+        if (app != 0) {
+            char completed[COMMAND_BUFFER_SIZE];
+            string_copy(completed, "spawn ", sizeof(completed));
+
+            size_t index = 6;
+            size_t app_index = 0;
+            while (index < sizeof(completed) - 1 && app->name[app_index] != '\0') {
+                completed[index++] = app->name[app_index++];
+            }
+            completed[index] = '\0';
+            shell_replace_buffer(completed);
+        }
+
+        return;
+    }
+
+    const char* command = shell_find_command_prefix(command_buffer);
+    if (command != 0) {
+        shell_replace_buffer(command);
+    }
+}
+
+void shell_history_previous(void) {
+    if (command_pending || command_history_count == 0 || command_history_view == 0) {
+        return;
+    }
+
+    command_history_view--;
+    shell_replace_buffer(command_history[command_history_view % COMMAND_HISTORY_SIZE]);
+}
+
+void shell_history_next(void) {
+    if (command_pending || command_history_count == 0 || command_history_view >= command_history_count) {
+        return;
+    }
+
+    command_history_view++;
+
+    if (command_history_view == command_history_count) {
+        shell_replace_buffer("");
+    } else {
+        shell_replace_buffer(command_history[command_history_view % COMMAND_HISTORY_SIZE]);
+    }
+}
+
+void shell_poll(void) {
+    if (!command_pending) {
+        return;
+    }
+
+    shell_execute_command();
+    shell_clear_buffer();
+    command_pending = 0;
+    shell_prompt();
 }

@@ -5,8 +5,7 @@
 
 context_save:
     mov edx, [esp + 4]
-    lea eax, [esp + 4]
-    mov [edx + 0], eax
+    mov [edx + 0], esp
     mov [edx + 4], ebp
     mov [edx + 8], ebx
     mov [edx + 12], esi
@@ -24,6 +23,7 @@ context_restore:
     mov esi, [edx + 12]
     mov edi, [edx + 16]
     mov eax, 1
-    jmp [edx + 20]
+    sti
+    ret
 
 section .note.GNU-stack noalloc noexec nowrite progbits

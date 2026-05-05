@@ -2,6 +2,7 @@
 
 #include "task.h"
 #include "terminal.h"
+#include "timer.h"
 
 static void syscall_write(const char* text) {
     terminal_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
@@ -12,13 +13,15 @@ static void syscall_write(const char* text) {
 }
 
 static void syscall_exit(uint32_t code) {
-    terminal_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    terminal_write("User task exited with code ");
-    terminal_write_dec(code);
-    terminal_write("\n");
-    terminal_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    task_exit_current(code);
+}
 
-    (void)code;
+static void syscall_write_dec(uint32_t value) {
+    terminal_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    terminal_write("[user] ");
+    terminal_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    terminal_write_dec(value);
+    terminal_write("\n");
 }
 
 static void syscall_yield(struct interrupt_frame* frame) {
@@ -39,6 +42,15 @@ void syscall_dispatch(struct interrupt_frame* frame) {
             break;
         case SYS_YIELD:
             syscall_yield(frame);
+            break;
+        case SYS_WRITE_DEC:
+            syscall_write_dec(frame->ebx);
+            break;
+        case SYS_GETPID:
+            frame->eax = task_current_id();
+            break;
+        case SYS_TICKS:
+            frame->eax = timer_ticks();
             break;
         default:
             terminal_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
