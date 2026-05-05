@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "initrd.h"
+#include "kapp.h"
 #include "terminal.h"
 #include "vfs.h"
 
@@ -263,6 +264,41 @@ void app_print_info(const char* name) {
     }
 
     initrd_cat_app_metadata(name);
+}
+
+void app_print_source(const char* name) {
+    enum app_kind kind = app_manifest_kind(name);
+
+    if (kind == APP_KIND_BUILT_IN) {
+        terminal_write(name);
+        terminal_write(": built-in\n");
+        return;
+    }
+
+    if (kind == APP_KIND_KAPP) {
+        terminal_write(name);
+        terminal_write(": kapp apps/");
+        terminal_write(name);
+        terminal_write(".kapp\n");
+        return;
+    }
+
+    if (app_find(name) != 0) {
+        terminal_write(name);
+        terminal_write(": built-in (fallback)\n");
+        return;
+    }
+
+    if (kapp_exists(name)) {
+        terminal_write(name);
+        terminal_write(": kapp apps/");
+        terminal_write(name);
+        terminal_write(".kapp (fallback)\n");
+        return;
+    }
+
+    terminal_write(name);
+    terminal_write(": not found\n");
 }
 
 void app_print_all(void) {

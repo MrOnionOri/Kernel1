@@ -47,12 +47,14 @@ static const char* shell_commands[] = {
     "pmm",
     "pwd",
     "ring3",
+    "run",
     "runall",
     "spawn",
     "tasks",
     "tasksv",
     "ticks",
     "vmmtest",
+    "which",
 };
 
 static int string_equals(const char* left, const char* right) {
@@ -269,6 +271,96 @@ static int shell_complete_path_command(const char* command_prefix) {
     return 1;
 }
 
+static int shell_spawn_app_text(const char* app_text) {
+    app_text = skip_spaces(app_text);
+
+    char app_name[24];
+    size_t index = 0;
+
+    while (index < sizeof(app_name) - 1 && app_text[index] != '\0' && app_text[index] != ' ') {
+        app_name[index] = app_text[index];
+        index++;
+    }
+
+    app_name[index] = '\0';
+
+    if (app_name[0] == '\0') {
+        terminal_write("No app given\n");
+        return 0;
+    }
+
+    const char* args = skip_spaces(app_text + index);
+    const struct app_descriptor* app = app_find(app_name);
+    enum app_kind kind = app_manifest_kind(app_name);
+
+    if (kind == APP_KIND_BUILT_IN) {
+        if (app == 0) {
+            terminal_write("Built-in app missing: ");
+            terminal_write(app_name);
+            terminal_write("\n");
+            return 0;
+        }
+
+        user_mode_spawn_app_with_args(app->name, app->entry, args);
+        return 1;
+    }
+
+    if (kind == APP_KIND_KAPP) {
+        if (kapp_spawn_app(app_name, args)) {
+            return 1;
+        }
+
+        terminal_write("KAPP app failed: ");
+        terminal_write(app_name);
+        terminal_write("\n");
+        return 0;
+    }
+
+    if (app != 0) {
+        user_mode_spawn_app_with_args(app->name, app->entry, args);
+        return 1;
+    }
+
+    if (kapp_spawn_app(app_name, args)) {
+        return 1;
+    }
+
+    terminal_write("Unknown app: ");
+    terminal_write(app_name);
+    terminal_write("\n");
+    return 0;
+}
+
+static int shell_complete_app_command(const char* command_prefix) {
+    size_t prefix_length = 0;
+
+    while (command_prefix[prefix_length] != '\0') {
+        prefix_length++;
+    }
+
+    if (!string_starts_with(command_buffer, command_prefix)) {
+        return 0;
+    }
+
+    const char* app_prefix = command_buffer + prefix_length;
+    const struct app_descriptor* app = app_find_prefix(app_prefix);
+
+    if (app != 0) {
+        char completed[COMMAND_BUFFER_SIZE];
+        string_copy(completed, command_prefix, sizeof(completed));
+
+        size_t index = prefix_length;
+        size_t app_index = 0;
+        while (index < sizeof(completed) - 1 && app->name[app_index] != '\0') {
+            completed[index++] = app->name[app_index++];
+        }
+        completed[index] = '\0';
+        shell_replace_buffer(completed);
+    }
+
+    return 1;
+}
+
 static void shell_execute_command(void) {
     command_buffer[command_length] = '\0';
 
@@ -279,7 +371,7 @@ static void shell_execute_command(void) {
     shell_history_add(command_buffer);
 
     if (string_equals(command_buffer, "help")) {
-        terminal_write("Commands: help, clear, pwd, cd <dir>, ls, ls <dir>, cat <file>, kapp <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, initrd, initrd ls, initrd cat <file>, spawn, spawn demo, runall, tasks, tasksv, about\n");
+        terminal_write("Commands: help, clear, pwd, cd <dir>, ls, ls <dir>, cat <file>, kapp <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, initrd ls, initrd cat <file>, spawn <app>, run <app>, runall, tasks, tasksv, about\n");
     } else if (string_equals(command_buffer, "clear")) {
         terminal_initialize();
         terminal_write("Kernel1 shell\n");
@@ -355,6 +447,8 @@ static void shell_execute_command(void) {
         app_print_all();
     } else if (string_starts_with(command_buffer, "appinfo ")) {
         app_print_info(command_buffer + 8);
+    } else if (string_starts_with(command_buffer, "which ")) {
+        app_print_source(command_buffer + 6);
     } else if (string_equals(command_buffer, "initrd")) {
         initrd_print_info();
     } else if (string_equals(command_buffer, "initrd ls")) {
@@ -364,40 +458,13 @@ static void shell_execute_command(void) {
     } else if (string_equals(command_buffer, "spawn")) {
         user_mode_spawn_test();
     } else if (string_starts_with(command_buffer, "spawn ")) {
-        const char* app_text = skip_spaces(command_buffer + 6);
-        char app_name[24];
-        size_t index = 0;
-
-        while (index < sizeof(app_name) - 1 && app_text[index] != '\0' && app_text[index] != ' ') {
-            app_name[index] = app_text[index];
-            index++;
-        }
-
-        app_name[index] = '\0';
-        const char* args = skip_spaces(app_text + index);
-        const struct app_descriptor* app = app_find(app_name);
-        enum app_kind kind = app_manifest_kind(app_name);
-
-        if (kind == APP_KIND_BUILT_IN) {
-            if (app == 0) {
-                terminal_write("Built-in app missing: ");
-                terminal_write(app_name);
-                terminal_write("\n");
-            } else {
-                user_mode_spawn_app_with_args(app->name, app->entry, args);
+        shell_spawn_app_text(command_buffer + 6);
+    } else if (string_starts_with(command_buffer, "run ")) {
+        if (shell_spawn_app_text(command_buffer + 4)) {
+            terminal_ensure_rows(6);
+            if (task_has_ready()) {
+                task_run_all_ready();
             }
-        } else if (kind == APP_KIND_KAPP) {
-            if (!kapp_spawn_app(app_name, args)) {
-                terminal_write("KAPP app failed: ");
-                terminal_write(app_name);
-                terminal_write("\n");
-            }
-        } else if (app != 0) {
-            user_mode_spawn_app_with_args(app->name, app->entry, args);
-        } else if (!kapp_spawn_app(app_name, args)) {
-            terminal_write("Unknown app: ");
-            terminal_write(app_name);
-            terminal_write("\n");
         }
     } else if (string_equals(command_buffer, "runall")) {
         terminal_ensure_rows(6);
@@ -475,23 +542,8 @@ void shell_complete(void) {
         return;
     }
 
-    if (string_starts_with(command_buffer, "spawn ")) {
-        const char* app_prefix = command_buffer + 6;
-        const struct app_descriptor* app = app_find_prefix(app_prefix);
-
-        if (app != 0) {
-            char completed[COMMAND_BUFFER_SIZE];
-            string_copy(completed, "spawn ", sizeof(completed));
-
-            size_t index = 6;
-            size_t app_index = 0;
-            while (index < sizeof(completed) - 1 && app->name[app_index] != '\0') {
-                completed[index++] = app->name[app_index++];
-            }
-            completed[index] = '\0';
-            shell_replace_buffer(completed);
-        }
-
+    if (shell_complete_app_command("spawn ") ||
+            shell_complete_app_command("run ")) {
         return;
     }
 

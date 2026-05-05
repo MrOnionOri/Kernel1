@@ -16,6 +16,7 @@ enum app_kind {
 
 void app_print_all(void);
 void app_print_info(const char* name);
+void app_print_source(const char* name);
 enum app_kind app_manifest_kind(const char* name);
 const struct app_descriptor* app_find(const char* name);
 const struct app_descriptor* app_find_prefix(const char* prefix);

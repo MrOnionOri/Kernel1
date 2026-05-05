@@ -182,3 +182,15 @@ int kapp_spawn_app(const char* name, const char* args) {
     terminal_write("\n");
     return 1;
 }
+
+int kapp_exists(const char* name) {
+    char path[48];
+    struct initrd_file file;
+    uint32_t header_size;
+    uint32_t entry_offset;
+    uint32_t image_size;
+    uint32_t flags;
+
+    build_kapp_path(name, path, sizeof(path));
+    return kapp_parse(path, &file, &header_size, &entry_offset, &image_size, &flags);
+}
