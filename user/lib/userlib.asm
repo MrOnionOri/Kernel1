@@ -5,9 +5,13 @@
 [global user_getpid]
 [global user_ticks]
 [global user_open]
+[global user_open_flags]
 [global user_read]
+[global user_write_fd]
 [global user_close]
 [global user_getargs]
+[global user_write_file]
+[global user_append_file]
 [global user_exit]
 
 SYS_EXIT equ 2
@@ -19,6 +23,10 @@ SYS_OPEN equ 8
 SYS_READ equ 9
 SYS_CLOSE equ 10
 SYS_GETARGS equ 11
+SYS_WRITE_FILE equ 12
+SYS_APPEND_FILE equ 13
+SYS_OPEN_FLAGS equ 14
+SYS_WRITE_FD equ 15
 STDOUT_FD equ 1
 
 section .user_text
@@ -48,8 +56,18 @@ user_open:
     int 0x80
     ret
 
+user_open_flags:
+    mov eax, SYS_OPEN_FLAGS
+    int 0x80
+    ret
+
 user_read:
     mov eax, SYS_READ
+    int 0x80
+    ret
+
+user_write_fd:
+    mov eax, SYS_WRITE_FD
     int 0x80
     ret
 
@@ -60,6 +78,16 @@ user_close:
 
 user_getargs:
     mov eax, SYS_GETARGS
+    int 0x80
+    ret
+
+user_write_file:
+    mov eax, SYS_WRITE_FILE
+    int 0x80
+    ret
+
+user_append_file:
+    mov eax, SYS_APPEND_FILE
     int 0x80
     ret
 

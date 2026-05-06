@@ -14,6 +14,10 @@
 #define SYS_READ 9
 #define SYS_CLOSE 10
 #define SYS_GETARGS 11
+#define SYS_WRITE_FILE 12
+#define SYS_APPEND_FILE 13
+#define SYS_OPEN_FLAGS 14
+#define SYS_WRITE_FD 15
 
 void syscall_dispatch(struct interrupt_frame* frame);
 

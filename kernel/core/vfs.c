@@ -16,6 +16,10 @@ struct vfs_handle {
     const char* data;
     uint32_t size;
     uint32_t offset;
+    int readable;
+    int writable;
+    uint32_t flags;
+    struct ramfs_node* node;
 };
 
 enum ramfs_node_type {
@@ -36,6 +40,7 @@ static struct vfs_handle handles[VFS_MAX_OPEN_FILES];
 static struct ramfs_node ramfs_nodes[RAMFS_MAX_NODES];
 
 static void string_copy(char* destination, const char* source, uint32_t size);
+static int ramfs_write_data(const char* path, const char* data, uint32_t size, const char* command_name);
 
 struct vfs_list_context {
     const char* path;
@@ -547,6 +552,10 @@ int vfs_open(const char* path) {
                 handles[i].data = node->data;
                 handles[i].size = node->size;
                 handles[i].offset = 0;
+                handles[i].readable = 1;
+                handles[i].writable = 0;
+                handles[i].flags = VFS_O_READ;
+                handles[i].node = node;
                 return (int)i;
             }
         }
@@ -564,6 +573,60 @@ int vfs_open(const char* path) {
             handles[i].data = file.data;
             handles[i].size = file.size;
             handles[i].offset = 0;
+            handles[i].readable = 1;
+            handles[i].writable = 0;
+            handles[i].flags = VFS_O_READ;
+            handles[i].node = 0;
+            return (int)i;
+        }
+    }
+
+    return VFS_INVALID_FD;
+}
+
+int vfs_open_flags(const char* path, uint32_t flags) {
+    struct ramfs_node* node;
+    struct initrd_file existing;
+
+    if ((flags & VFS_O_WRITE) == 0) {
+        return vfs_open(path);
+    }
+
+    if (vfs_is_directory(path)) {
+        return VFS_INVALID_FD;
+    }
+
+    node = ramfs_find(path);
+    if (node == 0 && initrd_find(path_without_leading_slash(path), &existing)) {
+        return VFS_INVALID_FD;
+    }
+
+    if (node == 0 && (flags & VFS_O_CREATE) == 0) {
+        return VFS_INVALID_FD;
+    }
+
+    if ((flags & VFS_O_TRUNC) || node == 0) {
+        if (!ramfs_write_data(path, "", 0, "open")) {
+            return VFS_INVALID_FD;
+        }
+
+        node = ramfs_find(path);
+    }
+
+    if (node == 0 || node->type != RAMFS_FILE) {
+        return VFS_INVALID_FD;
+    }
+
+    for (uint32_t i = 0; i < VFS_MAX_OPEN_FILES; i++) {
+        if (!handles[i].used) {
+            handles[i].used = 1;
+            handles[i].data = node->data;
+            handles[i].size = node->size;
+            handles[i].offset = (flags & VFS_O_APPEND) ? node->size : 0;
+            handles[i].readable = (flags & VFS_O_READ) != 0;
+            handles[i].writable = 1;
+            handles[i].flags = flags;
+            handles[i].node = node;
             return (int)i;
         }
     }
@@ -577,6 +640,10 @@ int32_t vfs_read(int fd, char* buffer, uint32_t size) {
     }
 
     struct vfs_handle* handle = &handles[fd];
+    if (!handle->readable) {
+        return -1;
+    }
+
     uint32_t available = handle->size - handle->offset;
 
     if (available == 0) {
@@ -593,6 +660,56 @@ int32_t vfs_read(int fd, char* buffer, uint32_t size) {
     return (int32_t)to_read;
 }
 
+int32_t vfs_write(int fd, const char* buffer, uint32_t size) {
+    if (fd < 0 || fd >= VFS_MAX_OPEN_FILES || buffer == 0 || !handles[fd].used) {
+        return -1;
+    }
+
+    struct vfs_handle* handle = &handles[fd];
+    struct ramfs_node* node = handle->node;
+
+    if (!handle->writable || node == 0 || node->type != RAMFS_FILE) {
+        return -1;
+    }
+
+    if (handle->flags & VFS_O_APPEND) {
+        handle->offset = node->size;
+    }
+
+    uint32_t end_offset = handle->offset + size;
+    if (end_offset < handle->offset || end_offset > RAMFS_MAX_FILE_SIZE) {
+        return -1;
+    }
+
+    uint32_t new_size = node->size > end_offset ? node->size : end_offset;
+    char* data = (char*)kmalloc(new_size + 1);
+    if (data == 0) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < new_size; i++) {
+        data[i] = i < node->size ? node->data[i] : 0;
+    }
+
+    for (uint32_t i = 0; i < size; i++) {
+        data[handle->offset + i] = buffer[i];
+    }
+
+    data[new_size] = '\0';
+
+    int ok = ramfs_write_data(node->path, data, new_size, "write");
+    kfree(data);
+
+    if (!ok) {
+        return -1;
+    }
+
+    handle->offset += size;
+    handle->data = node->data;
+    handle->size = node->size;
+    return (int32_t)size;
+}
+
 void vfs_close(int fd) {
     if (fd < 0 || fd >= VFS_MAX_OPEN_FILES) {
         return;
@@ -602,6 +719,10 @@ void vfs_close(int fd) {
     handles[fd].data = 0;
     handles[fd].size = 0;
     handles[fd].offset = 0;
+    handles[fd].readable = 0;
+    handles[fd].writable = 0;
+    handles[fd].flags = 0;
+    handles[fd].node = 0;
 }
 
 int vfs_complete_path(const char* prefix, char* output, uint32_t size) {
@@ -756,6 +877,10 @@ static int ramfs_write_data(const char* path, const char* data, uint32_t size, c
     }
 
     allocation[size] = '\0';
+    if (node->type == RAMFS_FILE && node->data != 0) {
+        kfree(node->data);
+    }
+
     node->data = allocation;
     node->size = size;
     node->capacity = size + 1;
@@ -764,6 +889,58 @@ static int ramfs_write_data(const char* path, const char* data, uint32_t size, c
 
 int vfs_write_text(const char* path, const char* text) {
     return ramfs_write_data(path, text, string_length(text), "write");
+}
+
+int vfs_append_text(const char* path, const char* text) {
+    struct ramfs_node* node = ramfs_find(path);
+    struct initrd_file file;
+    uint32_t old_size = 0;
+    uint32_t append_size = string_length(text);
+    uint32_t new_size;
+    char* buffer;
+
+    if (node != 0 && node->type == RAMFS_DIRECTORY) {
+        terminal_write("append: is a directory: ");
+        terminal_write(path);
+        terminal_write("\n");
+        return 0;
+    }
+
+    if (node == 0 && initrd_find(path_without_leading_slash(path), &file)) {
+        terminal_write("append: destination is read-only: ");
+        terminal_write(path);
+        terminal_write("\n");
+        return 0;
+    }
+
+    if (node != 0) {
+        old_size = node->size;
+    }
+
+    new_size = old_size + append_size;
+    if (new_size > RAMFS_MAX_FILE_SIZE) {
+        terminal_write("append: file too large for ramfs\n");
+        return 0;
+    }
+
+    buffer = (char*)kmalloc(new_size + 1);
+    if (buffer == 0) {
+        terminal_write("append: out of heap memory\n");
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < old_size; i++) {
+        buffer[i] = node->data[i];
+    }
+
+    for (uint32_t i = 0; i < append_size; i++) {
+        buffer[old_size + i] = text[i];
+    }
+
+    buffer[new_size] = '\0';
+    int ok = ramfs_write_data(path, buffer, new_size, "append");
+    kfree(buffer);
+    return ok;
 }
 
 int vfs_copy(const char* source_path, const char* destination_path) {
@@ -781,6 +958,7 @@ int vfs_copy(const char* source_path, const char* destination_path) {
         terminal_write("cp: source is a directory: ");
         terminal_write(source_path);
         terminal_write("\n");
+        kfree(buffer);
         return 0;
     }
 
@@ -789,6 +967,7 @@ int vfs_copy(const char* source_path, const char* destination_path) {
         terminal_write("cp: destination is read-only: ");
         terminal_write(destination_path);
         terminal_write("\n");
+        kfree(buffer);
         return 0;
     }
 
@@ -797,6 +976,7 @@ int vfs_copy(const char* source_path, const char* destination_path) {
         terminal_write("cp: source not found: ");
         terminal_write(source_path);
         terminal_write("\n");
+        kfree(buffer);
         return 0;
     }
 
@@ -808,6 +988,7 @@ int vfs_copy(const char* source_path, const char* destination_path) {
             terminal_write(source_path);
             terminal_write("\n");
             vfs_close(fd);
+            kfree(buffer);
             return 0;
         }
 
@@ -820,12 +1001,15 @@ int vfs_copy(const char* source_path, const char* destination_path) {
         if (total > RAMFS_MAX_FILE_SIZE) {
             terminal_write("cp: source too large for ramfs\n");
             vfs_close(fd);
+            kfree(buffer);
             return 0;
         }
     }
 
     vfs_close(fd);
-    return ramfs_write_data(destination_path, buffer, total, "cp");
+    int ok = ramfs_write_data(destination_path, buffer, total, "cp");
+    kfree(buffer);
+    return ok;
 }
 
 int vfs_move(const char* source_path, const char* destination_path) {
@@ -865,6 +1049,7 @@ int vfs_move(const char* source_path, const char* destination_path) {
 
     source->used = 0;
     source->path[0] = '\0';
+    kfree(source->data);
     source->data = 0;
     source->size = 0;
     source->capacity = 0;
@@ -894,6 +1079,7 @@ int vfs_remove(const char* path) {
 
     node->used = 0;
     node->path[0] = '\0';
+    kfree(node->data);
     node->data = 0;
     node->size = 0;
     node->capacity = 0;

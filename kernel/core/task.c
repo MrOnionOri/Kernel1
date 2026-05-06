@@ -4,6 +4,7 @@
 #include "arch.h"
 #include "heap.h"
 #include "terminal.h"
+#include "vfs.h"
 
 #define MAX_TASKS 8
 #define TASK_KERNEL_STACK_SIZE 4096
@@ -48,6 +49,33 @@ static void string_copy(char* destination, const char* source, uint32_t size) {
     destination[index] = '\0';
 }
 
+static void task_reset_files(struct task* task) {
+    for (uint32_t i = 0; i < TASK_MAX_FILES; i++) {
+        task->file_fds[i] = VFS_INVALID_FD;
+    }
+}
+
+static uint32_t task_open_file_count(const struct task* task) {
+    uint32_t count = 0;
+
+    for (uint32_t i = 0; i < TASK_MAX_FILES; i++) {
+        if (task->file_fds[i] != VFS_INVALID_FD) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+static void task_close_files(struct task* task) {
+    for (uint32_t i = 0; i < TASK_MAX_FILES; i++) {
+        if (task->file_fds[i] != VFS_INVALID_FD) {
+            vfs_close(task->file_fds[i]);
+            task->file_fds[i] = VFS_INVALID_FD;
+        }
+    }
+}
+
 void task_initialize(void) {
     next_task_id = 1;
     current_task = 0;
@@ -63,6 +91,7 @@ void task_initialize(void) {
         tasks[i].exit_code = 0;
         tasks[i].yields = 0;
         tasks[i].args[0] = '\0';
+        task_reset_files(&tasks[i]);
     }
 }
 
@@ -90,6 +119,46 @@ uint32_t task_copy_current_args(char* buffer, uint32_t size) {
     return index;
 }
 
+int task_current_add_file(int vfs_fd) {
+    if (current_task == 0 || vfs_fd == VFS_INVALID_FD) {
+        return VFS_INVALID_FD;
+    }
+
+    for (uint32_t i = 0; i < TASK_MAX_FILES; i++) {
+        if (current_task->file_fds[i] == VFS_INVALID_FD) {
+            current_task->file_fds[i] = vfs_fd;
+            return (int)i;
+        }
+    }
+
+    return VFS_INVALID_FD;
+}
+
+int task_current_get_file(uint32_t task_fd) {
+    if (current_task == 0 || task_fd >= TASK_MAX_FILES) {
+        return VFS_INVALID_FD;
+    }
+
+    return current_task->file_fds[task_fd];
+}
+
+int task_current_close_file(uint32_t task_fd) {
+    int vfs_fd;
+
+    if (current_task == 0 || task_fd >= TASK_MAX_FILES) {
+        return -1;
+    }
+
+    vfs_fd = current_task->file_fds[task_fd];
+    if (vfs_fd == VFS_INVALID_FD) {
+        return -1;
+    }
+
+    vfs_close(vfs_fd);
+    current_task->file_fds[task_fd] = VFS_INVALID_FD;
+    return 0;
+}
+
 struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32_t user_stack_top, const char* args) {
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (tasks[i].state == TASK_UNUSED || tasks[i].state == TASK_EXITED) {
@@ -107,6 +176,7 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
             tasks[i].exit_code = 0;
             tasks[i].yields = 0;
             string_copy(tasks[i].args, args, sizeof(tasks[i].args));
+            task_reset_files(&tasks[i]);
             return &tasks[i];
         }
     }
@@ -189,6 +259,7 @@ void task_run_all_ready(void) {
 
 void task_exit_current(uint32_t exit_code) {
     if (current_task != 0) {
+        task_close_files(current_task);
         current_task->exit_code = exit_code;
         current_task->state = TASK_EXITED;
     }
@@ -236,6 +307,8 @@ void task_print_all(void) {
         terminal_write_dec(tasks[i].exit_code);
         terminal_write(" y=");
         terminal_write_dec(tasks[i].yields);
+        terminal_write(" files=");
+        terminal_write_dec(task_open_file_count(&tasks[i]));
         terminal_write("\n");
     }
 }
@@ -264,6 +337,8 @@ void task_print_all_verbose(void) {
         terminal_write_dec(tasks[i].exit_code);
         terminal_write(" yields=");
         terminal_write_dec(tasks[i].yields);
+        terminal_write(" files=");
+        terminal_write_dec(task_open_file_count(&tasks[i]));
         if (tasks[i].args[0] != '\0') {
             terminal_write(" args=");
             terminal_write(tasks[i].args);

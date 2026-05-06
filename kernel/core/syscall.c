@@ -114,12 +114,40 @@ static int32_t syscall_open(const char* path) {
     }
 
     int fd = vfs_open(path);
+    int task_fd;
 
     if (fd == VFS_INVALID_FD) {
         return -1;
     }
 
-    return fd + USER_FILE_FD_BASE;
+    task_fd = task_current_add_file(fd);
+    if (task_fd == VFS_INVALID_FD) {
+        vfs_close(fd);
+        return -1;
+    }
+
+    return task_fd + USER_FILE_FD_BASE;
+}
+
+static int32_t syscall_open_flags(const char* path, uint32_t flags) {
+    if (!user_string_is_valid(path)) {
+        return -1;
+    }
+
+    int fd = vfs_open_flags(path, flags);
+    int task_fd;
+
+    if (fd == VFS_INVALID_FD) {
+        return -1;
+    }
+
+    task_fd = task_current_add_file(fd);
+    if (task_fd == VFS_INVALID_FD) {
+        vfs_close(fd);
+        return -1;
+    }
+
+    return task_fd + USER_FILE_FD_BASE;
 }
 
 static int32_t syscall_read(uint32_t user_fd, char* buffer, uint32_t size) {
@@ -127,7 +155,25 @@ static int32_t syscall_read(uint32_t user_fd, char* buffer, uint32_t size) {
         return -1;
     }
 
-    return vfs_read((int)(user_fd - USER_FILE_FD_BASE), buffer, size);
+    int fd = task_current_get_file(user_fd - USER_FILE_FD_BASE);
+    if (fd == VFS_INVALID_FD) {
+        return -1;
+    }
+
+    return vfs_read(fd, buffer, size);
+}
+
+static int32_t syscall_write_fd(uint32_t user_fd, const char* buffer, uint32_t size) {
+    if (user_fd < USER_FILE_FD_BASE || size > WRITE_BUF_MAX || !user_range_is_valid(buffer, size)) {
+        return -1;
+    }
+
+    int fd = task_current_get_file(user_fd - USER_FILE_FD_BASE);
+    if (fd == VFS_INVALID_FD) {
+        return -1;
+    }
+
+    return vfs_write(fd, buffer, size);
 }
 
 static int32_t syscall_close(uint32_t user_fd) {
@@ -135,8 +181,7 @@ static int32_t syscall_close(uint32_t user_fd) {
         return -1;
     }
 
-    vfs_close((int)(user_fd - USER_FILE_FD_BASE));
-    return 0;
+    return task_current_close_file(user_fd - USER_FILE_FD_BASE);
 }
 
 static int32_t syscall_getargs(char* buffer, uint32_t size) {
@@ -145,6 +190,22 @@ static int32_t syscall_getargs(char* buffer, uint32_t size) {
     }
 
     return (int32_t)task_copy_current_args(buffer, size);
+}
+
+static int32_t syscall_write_file(const char* path, const char* text) {
+    if (!user_string_is_valid(path) || !user_string_is_valid(text)) {
+        return -1;
+    }
+
+    return vfs_write_text(path, text) ? 0 : -1;
+}
+
+static int32_t syscall_append_file(const char* path, const char* text) {
+    if (!user_string_is_valid(path) || !user_string_is_valid(text)) {
+        return -1;
+    }
+
+    return vfs_append_text(path, text) ? 0 : -1;
 }
 
 void syscall_dispatch(struct interrupt_frame* frame) {
@@ -174,14 +235,26 @@ void syscall_dispatch(struct interrupt_frame* frame) {
         case SYS_OPEN:
             frame->eax = (uint32_t)syscall_open((const char*)frame->ebx);
             break;
+        case SYS_OPEN_FLAGS:
+            frame->eax = (uint32_t)syscall_open_flags((const char*)frame->ebx, frame->ecx);
+            break;
         case SYS_READ:
             frame->eax = (uint32_t)syscall_read(frame->ebx, (char*)frame->ecx, frame->edx);
+            break;
+        case SYS_WRITE_FD:
+            frame->eax = (uint32_t)syscall_write_fd(frame->ebx, (const char*)frame->ecx, frame->edx);
             break;
         case SYS_CLOSE:
             frame->eax = (uint32_t)syscall_close(frame->ebx);
             break;
         case SYS_GETARGS:
             frame->eax = (uint32_t)syscall_getargs((char*)frame->ebx, frame->ecx);
+            break;
+        case SYS_WRITE_FILE:
+            frame->eax = (uint32_t)syscall_write_file((const char*)frame->ebx, (const char*)frame->ecx);
+            break;
+        case SYS_APPEND_FILE:
+            frame->eax = (uint32_t)syscall_append_file((const char*)frame->ebx, (const char*)frame->ecx);
             break;
         default:
             terminal_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);

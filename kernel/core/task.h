@@ -7,6 +7,7 @@
 
 #define TASK_ARGS_SIZE 64
 #define TASK_NAME_SIZE 24
+#define TASK_MAX_FILES 8
 
 enum task_state {
     TASK_UNUSED = 0,
@@ -25,12 +26,16 @@ struct task {
     uint32_t exit_code;
     uint32_t yields;
     char args[TASK_ARGS_SIZE];
+    int file_fds[TASK_MAX_FILES];
 };
 
 void task_initialize(void);
 uint32_t task_next_id(void);
 uint32_t task_current_id(void);
 uint32_t task_copy_current_args(char* buffer, uint32_t size);
+int task_current_add_file(int vfs_fd);
+int task_current_get_file(uint32_t task_fd);
+int task_current_close_file(uint32_t task_fd);
 struct task* task_create_user(uint32_t entry, uint32_t user_stack_top);
 struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t user_stack_top);
 struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32_t user_stack_top, const char* args);
