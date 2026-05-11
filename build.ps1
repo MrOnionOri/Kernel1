@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 152
+$KernelSectors = 160
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
