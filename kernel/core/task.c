@@ -257,6 +257,52 @@ void task_run_all_ready(void) {
     terminal_write("No READY tasks\n");
 }
 
+int task_kill(uint32_t id, uint32_t exit_code) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state == TASK_UNUSED || tasks[i].id != id) {
+            continue;
+        }
+
+        if (tasks[i].state == TASK_EXITED) {
+            return 0;
+        }
+
+        if (&tasks[i] == current_task) {
+            return 0;
+        }
+
+        task_close_files(&tasks[i]);
+        tasks[i].exit_code = exit_code;
+        tasks[i].state = TASK_EXITED;
+        return 1;
+    }
+
+    return 0;
+}
+
+int task_wait(uint32_t id, uint32_t* exit_code) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state == TASK_UNUSED || tasks[i].id != id) {
+            continue;
+        }
+
+        while (tasks[i].state == TASK_READY) {
+            task_run_internal(&tasks[i], 0);
+        }
+
+        if (tasks[i].state == TASK_EXITED) {
+            if (exit_code != 0) {
+                *exit_code = tasks[i].exit_code;
+            }
+            return 1;
+        }
+
+        return 0;
+    }
+
+    return 0;
+}
+
 void task_exit_current(uint32_t exit_code) {
     if (current_task != 0) {
         task_close_files(current_task);

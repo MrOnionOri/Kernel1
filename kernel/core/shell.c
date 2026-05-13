@@ -1,20 +1,13 @@
 #include "shell.h"
 
-#include "app.h"
-#include "arch.h"
-#include "heap.h"
 #include "initrd.h"
-#include "kapp.h"
-#include "memory_map.h"
-#include "pmm.h"
-#include "task.h"
 #include "terminal.h"
-#include "timer.h"
+#include "shell_apps.h"
 #include "shell_env.h"
 #include "shell_fs.h"
 #include "shell_parser.h"
 #include "shell_script.h"
-#include "user_mode.h"
+#include "shell_system.h"
 #include "vfs.h"
 
 #include <stddef.h>
@@ -56,6 +49,7 @@ static const char* shell_commands[] = {
     "ifset",
     "initrd",
     "kapp",
+    "kill",
     "kmalloc",
     "ls",
     "mem",
@@ -75,8 +69,10 @@ static const char* shell_commands[] = {
     "tasks",
     "tasksv",
     "ticks",
+    "touch",
     "tree",
     "vmmtest",
+    "wait",
     "which",
     "write",
     "unset",
@@ -438,104 +434,6 @@ static int shell_complete_last_path_argument(const char* command_prefix) {
     return 1;
 }
 
-static struct task* shell_spawn_app_text(const char* app_text) {
-    app_text = skip_spaces(app_text);
-
-    char app_name[24];
-    size_t index = 0;
-
-    while (index < sizeof(app_name) - 1 && app_text[index] != '\0' && app_text[index] != ' ') {
-        app_name[index] = app_text[index];
-        index++;
-    }
-
-    app_name[index] = '\0';
-
-    if (app_name[0] == '\0') {
-        terminal_write("No app given\n");
-        return 0;
-    }
-
-    const char* args = skip_spaces(app_text + index);
-    const struct app_descriptor* app = app_find(app_name);
-    enum app_kind kind = app_manifest_kind(app_name);
-
-    if (kind == APP_KIND_BUILT_IN) {
-        if (app == 0) {
-            terminal_write("Built-in app missing: ");
-            terminal_write(app_name);
-            terminal_write("\n");
-            return 0;
-        }
-
-        return user_mode_spawn_app_with_args(app->name, app->entry, args);
-    }
-
-    if (kind == APP_KIND_KAPP) {
-        struct task* task = kapp_spawn_app(app_name, args);
-        if (task != 0) {
-            return task;
-        }
-
-        terminal_write("KAPP app failed: ");
-        terminal_write(app_name);
-        terminal_write("\n");
-        return 0;
-    }
-
-    if (app != 0) {
-        return user_mode_spawn_app_with_args(app->name, app->entry, args);
-    }
-
-    struct task* task = kapp_spawn_app(app_name, args);
-    if (task != 0) {
-        return task;
-    }
-
-    terminal_write("Unknown app: ");
-    terminal_write(app_name);
-    terminal_write("\n");
-    return 0;
-}
-
-static void shell_run_foreground(struct task* task) {
-    terminal_ensure_rows(6);
-
-    while (task != 0 && task->state == TASK_READY) {
-        task_run(task);
-    }
-}
-
-static int shell_complete_app_command(const char* command_prefix) {
-    size_t prefix_length = 0;
-
-    while (command_prefix[prefix_length] != '\0') {
-        prefix_length++;
-    }
-
-    if (!string_starts_with(command_buffer, command_prefix)) {
-        return 0;
-    }
-
-    const char* app_prefix = command_buffer + prefix_length;
-    const struct app_descriptor* app = app_find_prefix(app_prefix);
-
-    if (app != 0) {
-        char completed[COMMAND_BUFFER_SIZE];
-        string_copy(completed, command_prefix, sizeof(completed));
-
-        size_t index = prefix_length;
-        size_t app_index = 0;
-        while (index < sizeof(completed) - 1 && app->name[app_index] != '\0') {
-            completed[index++] = app->name[app_index++];
-        }
-        completed[index] = '\0';
-        shell_replace_buffer(completed);
-    }
-
-    return 1;
-}
-
 static void shell_run_command_text(const char* command) {
     if (command[0] == '\0') {
         shell_last_status = 1;
@@ -653,39 +551,13 @@ static void shell_execute_command(void) {
             shell_last_status = 0;
         }
         return;
-    } else if (string_equals(line.args[0], "run") || string_equals(line.args[0], "spawn")) {
-        if (line.count < 2) {
-            terminal_write(line.args[0]);
-            terminal_write(": missing app\n");
-            shell_last_status = 1;
-        } else {
-            char app_text[COMMAND_BUFFER_SIZE];
-            shell_join_args(&line, 1, app_text, sizeof(app_text));
-            if (string_equals(line.args[0], "run")) {
-                shell_run_foreground(shell_spawn_app_text(app_text));
-            } else {
-                shell_spawn_app_text(app_text);
-            }
-            shell_last_status = 0;
-        }
-        return;
-    } else if (string_equals(line.args[0], "kapp") && line.count > 1) {
-        char path[SHELL_FS_PATH_SIZE];
-        shell_fs_resolve_path(line.args[1], path, sizeof(path));
-        kapp_inspect(path);
-        shell_last_status = 0;
-        return;
-    } else if (string_equals(line.args[0], "appinfo") && line.count > 1) {
-        app_print_info(line.args[1]);
-        shell_last_status = 0;
-        return;
-    } else if (string_equals(line.args[0], "which") && line.count > 1) {
-        app_print_source(line.args[1]);
-        shell_last_status = 0;
-        return;
     } else if (string_equals(line.args[0], "initrd") && line.count > 2 && string_equals(line.args[1], "cat")) {
         initrd_cat(line.args[2]);
         shell_last_status = 0;
+        return;
+    }
+
+    if (shell_apps_handle_line(&line, &shell_last_status)) {
         return;
     }
 
@@ -693,92 +565,21 @@ static void shell_execute_command(void) {
         return;
     }
 
+    if (shell_system_handle_line(&line, &shell_last_status)) {
+        return;
+    }
+
     if (string_equals(command_buffer, "help")) {
-        terminal_write("Commands: help, history, env, set <name> <value>, unset <name>, alias <name> <cmd>, unalias <name>, aliases, source <file> [args], exit <code>, foreach <var> <items...> do <cmd>, ifset <var> <cmd>, ifnotset <var> <cmd>, ifeq <a> <b> <cmd>, ifneq <a> <b> <cmd>, echo <text> [> file|>> file], clear, pwd, cd <dir>, ls, tree, cat <file>, stat <path>, cp <src> <dst>, mv <src> <dst>, mkdir <dir>, write <file> <text>, append <file> <text>, rm <path>, kapp <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, spawn <app>, run <app>, runall, tasks, tasksv, about\n");
+        terminal_write("Commands: help, history, env, set <name> <value>, unset <name>, alias <name> <cmd>, unalias <name>, aliases, source <file> [args], exit <code>, foreach <var> <items...> do <cmd>, ifset <var> <cmd>, ifnotset <var> <cmd>, ifeq <a> <b> <cmd>, ifneq <a> <b> <cmd>, echo <text> [> file|>> file], clear, pwd, cd <dir>, ls, tree, cat <file>, stat <path>, cp <src> <dst>, mv <src> <dst>, mkdir [-p] <dir>, touch <file>, write <file> <text>, append <file> <text>, rm <path>, kapp <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, spawn <app>, run <app>, runall, kill <id>, wait <id>, tasks, tasksv, about\n");
     } else if (string_equals(command_buffer, "clear")) {
         terminal_initialize();
         terminal_write("Kernel1 shell\n");
-    } else if (string_equals(command_buffer, "ticks")) {
-        terminal_write("Timer ticks: ");
-        terminal_write_dec(timer_ticks());
-        terminal_write("\n");
-    } else if (string_equals(command_buffer, "mem")) {
-        memory_map_print();
-    } else if (string_equals(command_buffer, "pmm")) {
-        pmm_print_stats();
-    } else if (string_equals(command_buffer, "alloc")) {
-        uint32_t address = pmm_alloc_page();
-
-        if (address == 0) {
-            terminal_write("PMM allocation failed\n");
-        } else {
-            terminal_write("Allocated page: ");
-            terminal_write_hex(address);
-            terminal_write("\n");
-        }
-    } else if (string_equals(command_buffer, "heap")) {
-        heap_print_stats();
-    } else if (string_equals(command_buffer, "kmalloc")) {
-        void* pointer = kmalloc(64);
-
-        if (pointer == 0) {
-            terminal_write("kmalloc failed\n");
-        } else {
-            uint8_t* bytes = (uint8_t*)pointer;
-            bytes[0] = 0x4B;
-            bytes[63] = 0x31;
-
-            terminal_write("kmalloc(64): ");
-            terminal_write_hex((uint32_t)pointer);
-            terminal_write(" phys=");
-            terminal_write_hex(arch_get_physical((uint32_t)pointer));
-            terminal_write(" test=");
-            terminal_write_hex(bytes[0]);
-            terminal_putchar('/');
-            terminal_write_hex(bytes[63]);
-            terminal_write("\n");
-        }
-    } else if (string_equals(command_buffer, "paging")) {
-        arch_print_status();
-    } else if (string_equals(command_buffer, "vmmtest")) {
-        arch_test_mapping();
-    } else if (string_equals(command_buffer, "gdt")) {
-        arch_print_status();
-    } else if (string_equals(command_buffer, "ring3")) {
-        user_mode_enter_test();
-    } else if (string_equals(command_buffer, "apps")) {
-        app_print_all();
-    } else if (string_starts_with(command_buffer, "appinfo ")) {
-        app_print_info(command_buffer + 8);
-    } else if (string_starts_with(command_buffer, "which ")) {
-        app_print_source(command_buffer + 6);
     } else if (string_equals(command_buffer, "initrd")) {
         initrd_print_info();
     } else if (string_equals(command_buffer, "initrd ls")) {
         initrd_list();
     } else if (string_starts_with(command_buffer, "initrd cat ")) {
         initrd_cat(command_buffer + 11);
-    } else if (string_equals(command_buffer, "spawn")) {
-        user_mode_spawn_test();
-    } else if (string_starts_with(command_buffer, "spawn ")) {
-        shell_spawn_app_text(command_buffer + 6);
-    } else if (string_starts_with(command_buffer, "run ")) {
-        shell_run_foreground(shell_spawn_app_text(command_buffer + 4));
-    } else if (string_equals(command_buffer, "runall")) {
-        terminal_ensure_rows(6);
-        if (task_has_ready()) {
-            task_run_all_ready();
-        } else {
-            terminal_write("No READY tasks\n");
-        }
-    } else if (string_equals(command_buffer, "tasks")) {
-        terminal_ensure_rows(10);
-        task_print_all();
-    } else if (string_equals(command_buffer, "tasksv")) {
-        terminal_ensure_rows(14);
-        task_print_all_verbose();
-    } else if (string_equals(command_buffer, "about")) {
-        terminal_write("Kernel1: 32-bit educational kernel in ASM + C.\n");
     } else {
         terminal_write("Unknown command: ");
         terminal_write(command_buffer);
@@ -886,15 +687,17 @@ void shell_complete(void) {
             shell_complete_path_command("source ") ||
             shell_complete_path_command("stat ") ||
             shell_complete_path_command("tree ") ||
+            shell_complete_path_command("touch ") ||
             shell_complete_last_path_argument("write ") ||
             shell_complete_path_command("initrd cat ")) {
         return;
     }
 
-    if (shell_complete_app_command("appinfo ") ||
-            shell_complete_app_command("spawn ") ||
-            shell_complete_app_command("which ") ||
-            shell_complete_app_command("run ")) {
+    char completed_app[COMMAND_BUFFER_SIZE];
+    if (shell_apps_complete(command_buffer, completed_app, sizeof(completed_app))) {
+        if (completed_app[0] != '\0') {
+            shell_replace_buffer(completed_app);
+        }
         return;
     }
 

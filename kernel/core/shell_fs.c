@@ -34,6 +34,51 @@ static void string_copy(char* destination, const char* source, size_t size) {
     destination[index] = '\0';
 }
 
+static int shell_mkdir_p(const char* input) {
+    char resolved[SHELL_FS_PATH_SIZE];
+    char partial[SHELL_FS_PATH_SIZE];
+    size_t read = 0;
+    size_t write = 0;
+
+    shell_fs_resolve_path(input, resolved, sizeof(resolved));
+
+    if (resolved[0] == '\0' || string_equals(resolved, "/")) {
+        return 1;
+    }
+
+    partial[0] = '\0';
+
+    while (resolved[read] != '\0') {
+        while (resolved[read] == '/') {
+            read++;
+        }
+
+        if (resolved[read] == '\0') {
+            break;
+        }
+
+        if (write > 0 && write < sizeof(partial) - 1) {
+            partial[write++] = '/';
+            partial[write] = '\0';
+        }
+
+        while (resolved[read] != '\0' && resolved[read] != '/' && write < sizeof(partial) - 1) {
+            partial[write++] = resolved[read++];
+            partial[write] = '\0';
+        }
+
+        if (vfs_is_directory(partial)) {
+            continue;
+        }
+
+        if (!vfs_mkdir(partial)) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 static void shell_change_directory(const char* path) {
     if (string_equals(path, "/")) {
         current_directory[0] = '\0';
@@ -253,13 +298,44 @@ int shell_fs_handle_line(const struct shell_line* line, int* last_status) {
 
     if (string_equals(line->args[0], "mkdir")) {
         if (line->count < 2) {
-            terminal_write("mkdir: usage mkdir <dir>\n");
+            terminal_write("mkdir: usage mkdir [-p] <dir>\n");
             *last_status = 1;
+        } else if (string_equals(line->args[1], "-p")) {
+            if (line->count < 3) {
+                terminal_write("mkdir: usage mkdir -p <dir>\n");
+                *last_status = 1;
+            } else if (shell_mkdir_p(line->args[2])) {
+                terminal_write("Directory ready: ");
+                terminal_write(line->args[2]);
+                terminal_write("\n");
+                *last_status = 0;
+            } else {
+                *last_status = 1;
+            }
         } else {
             char path[SHELL_FS_PATH_SIZE];
             shell_fs_resolve_path(line->args[1], path, sizeof(path));
             if (vfs_mkdir(path)) {
                 terminal_write("Created directory: ");
+                terminal_write(path);
+                terminal_write("\n");
+                *last_status = 0;
+            } else {
+                *last_status = 1;
+            }
+        }
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "touch")) {
+        if (line->count < 2) {
+            terminal_write("touch: usage touch <file>\n");
+            *last_status = 1;
+        } else {
+            char path[SHELL_FS_PATH_SIZE];
+            shell_fs_resolve_path(line->args[1], path, sizeof(path));
+            if (vfs_write_text(path, "")) {
+                terminal_write("Touched ");
                 terminal_write(path);
                 terminal_write("\n");
                 *last_status = 0;

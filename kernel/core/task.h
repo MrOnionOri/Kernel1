@@ -42,6 +42,8 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
 void task_run(struct task* task);
 void task_run_all_ready(void);
 int task_has_ready(void);
+int task_kill(uint32_t id, uint32_t exit_code);
+int task_wait(uint32_t id, uint32_t* exit_code);
 void task_exit_current(uint32_t exit_code);
 void task_yield_current(struct interrupt_frame* frame);
 void task_prepare_exit_return(struct interrupt_frame* frame, uint32_t exit_code);
