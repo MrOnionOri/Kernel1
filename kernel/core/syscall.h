@@ -18,6 +18,7 @@
 #define SYS_APPEND_FILE 13
 #define SYS_OPEN_FLAGS 14
 #define SYS_WRITE_FD 15
+#define SYS_MKDIR 16
 
 void syscall_dispatch(struct interrupt_frame* frame);
 

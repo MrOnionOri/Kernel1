@@ -12,6 +12,7 @@
 [global user_getargs]
 [global user_write_file]
 [global user_append_file]
+[global user_mkdir]
 [global user_exit]
 
 SYS_EXIT equ 2
@@ -27,6 +28,7 @@ SYS_WRITE_FILE equ 12
 SYS_APPEND_FILE equ 13
 SYS_OPEN_FLAGS equ 14
 SYS_WRITE_FD equ 15
+SYS_MKDIR equ 16
 STDOUT_FD equ 1
 
 section .user_text
@@ -88,6 +90,11 @@ user_write_file:
 
 user_append_file:
     mov eax, SYS_APPEND_FILE
+    int 0x80
+    ret
+
+user_mkdir:
+    mov eax, SYS_MKDIR
     int 0x80
     ret
 

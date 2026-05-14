@@ -17,7 +17,7 @@ behind small arch, driver, VFS, task, and app interfaces.
 - `kernel/mm`: memory managers: BIOS memory-map ingestion, physical page
   allocator, and kernel heap.
 - `kernel/drivers`: current device drivers: VGA text terminal, PS/2 keyboard,
-  and PIT timer.
+  PIT timer, and a minimal ATA PIO data-disk probe/read path.
 - `kernel/lib`: low-level helpers shared by the kernel.
 - `user/lib`: tiny user-mode syscall helper library.
 - `user/demo`: linked-in user-mode demo apps used for ring-3 and syscall tests.
@@ -117,6 +117,34 @@ docs/kapp.txt
 Writable files currently live in RAM. This is safe for experimentation because
 the OS is not writing to the host disk directly.
 
+## Disk Work
+
+The build scripts create a safe secondary raw image at `build/data.img` and pass
+it to QEMU as IDE index 1. The kernel treats this as the data disk on ATA
+primary slave.
+
+Current disk commands:
+
+```text
+diskinfo         show ATA identify data
+diskread <lba>   dump one 512-byte sector in hex/ascii
+diskwrite <lba> <text>
+                 overwrite one sector with text and zero-fill the rest
+kfsformat        write a KFS1 superblock and clear the directory area
+kfsinfo          show KFS1 superblock metadata
+kfsls           list persistent KFS files
+kfssave <name> <text>
+                save one small text file into KFS
+kfscat <name>   print one KFS file
+kfsstat <name>  show one KFS file's slot, data sector, and size
+kfsrm <name>    remove one KFS file and clear its data sector
+```
+
+This stage writes only to QEMU's secondary `build/data.img`, not to the boot
+image or host disks. KFS1 currently reserves sector 0 as the superblock, sectors
+1-4 as the directory area, and starts file data at sector 5. The first file
+implementation stores one small file per sector.
+
 ## Apps And KAPP
 
 There are two app sources:
@@ -179,6 +207,11 @@ Current syscalls:
 9  SYS_READ       ebx=fd ecx=buffer edx=len     returns bytes read or -1
 10 SYS_CLOSE      ebx=fd                        returns 0 or -1
 11 SYS_GETARGS    ebx=buffer ecx=len            returns bytes copied
+12 SYS_WRITE_FILE ebx=path ecx=string_c         returns 0 or -1
+13 SYS_APPEND_FILE ebx=path ecx=string_c        returns 0 or -1
+14 SYS_OPEN_FLAGS ebx=path ecx=flags            returns fd or -1
+15 SYS_WRITE_FD   ebx=fd ecx=buffer edx=len     returns bytes written or -1
+16 SYS_MKDIR      ebx=path                      returns 0 or -1
 ```
 
 The syscall layer validates user pointers against the `.user` image and user

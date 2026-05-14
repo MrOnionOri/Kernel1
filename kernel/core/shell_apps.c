@@ -303,6 +303,32 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
         return 1;
     }
 
+    if (string_equals(line->args[0], "reap")) {
+        uint32_t count = task_reap_exited();
+
+        terminal_write("Reaped ");
+        terminal_write_dec(count);
+        terminal_write(" exited task");
+        if (count != 1) {
+            terminal_write("s");
+        }
+        terminal_write("\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "ps")) {
+        if (line->count > 1 && string_equals(line->args[1], "-v")) {
+            terminal_ensure_rows(14);
+            task_print_all_verbose();
+        } else {
+            terminal_ensure_rows(10);
+            task_print_all();
+        }
+        *last_status = 0;
+        return 1;
+    }
+
     if (string_equals(line->args[0], "tasks")) {
         terminal_ensure_rows(10);
         task_print_all();

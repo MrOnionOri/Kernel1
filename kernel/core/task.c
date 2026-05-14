@@ -76,22 +76,29 @@ static void task_close_files(struct task* task) {
     }
 }
 
+static void task_clear_slot(struct task* task) {
+    uint32_t reusable_kernel_stack_top = task->kernel_stack_top;
+
+    task->id = 0;
+    task->name[0] = '\0';
+    task->state = TASK_UNUSED;
+    task->entry = 0;
+    task->user_stack_top = 0;
+    task->kernel_stack_top = reusable_kernel_stack_top;
+    task->exit_code = 0;
+    task->yields = 0;
+    task->args[0] = '\0';
+    task_reset_files(task);
+}
+
 void task_initialize(void) {
     next_task_id = 1;
     current_task = 0;
     scheduler_cursor = 0;
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        tasks[i].id = 0;
-        tasks[i].name[0] = '\0';
-        tasks[i].state = TASK_UNUSED;
-        tasks[i].entry = 0;
-        tasks[i].user_stack_top = 0;
         tasks[i].kernel_stack_top = 0;
-        tasks[i].exit_code = 0;
-        tasks[i].yields = 0;
-        tasks[i].args[0] = '\0';
-        task_reset_files(&tasks[i]);
+        task_clear_slot(&tasks[i]);
     }
 }
 
@@ -162,9 +169,17 @@ int task_current_close_file(uint32_t task_fd) {
 struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32_t user_stack_top, const char* args) {
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (tasks[i].state == TASK_UNUSED || tasks[i].state == TASK_EXITED) {
-            void* kernel_stack = kmalloc_aligned(TASK_KERNEL_STACK_SIZE, 16);
-            if (kernel_stack == 0) {
-                return 0;
+            if (tasks[i].state == TASK_EXITED) {
+                task_clear_slot(&tasks[i]);
+            }
+
+            if (tasks[i].kernel_stack_top == 0) {
+                void* kernel_stack = kmalloc_aligned(TASK_KERNEL_STACK_SIZE, 16);
+                if (kernel_stack == 0) {
+                    return 0;
+                }
+
+                tasks[i].kernel_stack_top = (uint32_t)kernel_stack + TASK_KERNEL_STACK_SIZE;
             }
 
             tasks[i].id = next_task_id++;
@@ -172,7 +187,6 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
             tasks[i].state = TASK_READY;
             tasks[i].entry = entry;
             tasks[i].user_stack_top = user_stack_top;
-            tasks[i].kernel_stack_top = (uint32_t)kernel_stack + TASK_KERNEL_STACK_SIZE;
             tasks[i].exit_code = 0;
             tasks[i].yields = 0;
             string_copy(tasks[i].args, args, sizeof(tasks[i].args));
@@ -301,6 +315,19 @@ int task_wait(uint32_t id, uint32_t* exit_code) {
     }
 
     return 0;
+}
+
+uint32_t task_reap_exited(void) {
+    uint32_t count = 0;
+
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state == TASK_EXITED) {
+            task_clear_slot(&tasks[i]);
+            count++;
+        }
+    }
+
+    return count;
 }
 
 void task_exit_current(uint32_t exit_code) {

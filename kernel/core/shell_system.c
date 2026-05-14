@@ -1,7 +1,9 @@
 #include "shell_system.h"
 
 #include "arch.h"
+#include "ata.h"
 #include "heap.h"
+#include "kfs.h"
 #include "memory_map.h"
 #include "pmm.h"
 #include "terminal.h"
@@ -24,6 +26,29 @@ static int string_equals(const char* left, const char* right) {
     return left[index] == right[index];
 }
 
+static uint32_t string_to_uint(const char* text, int* ok) {
+    uint32_t value = 0;
+    size_t index = 0;
+
+    *ok = 0;
+
+    if (text[0] == '\0') {
+        return 0;
+    }
+
+    while (text[index] != '\0') {
+        if (text[index] < '0' || text[index] > '9') {
+            return 0;
+        }
+
+        value = value * 10 + (uint32_t)(text[index] - '0');
+        index++;
+    }
+
+    *ok = 1;
+    return value;
+}
+
 int shell_system_handle_line(const struct shell_line* line, int* last_status) {
     if (string_equals(line->args[0], "ticks")) {
         terminal_write("Timer ticks: ");
@@ -36,6 +61,123 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
     if (string_equals(line->args[0], "mem")) {
         memory_map_print();
         *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "diskinfo")) {
+        ata_print_data_disk_info();
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "diskread")) {
+        int ok = 0;
+
+        if (line->count < 2) {
+            terminal_write("diskread: usage diskread <lba>\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        uint32_t lba = string_to_uint(line->args[1], &ok);
+        if (!ok) {
+            terminal_write("diskread: invalid lba\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        *last_status = ata_print_data_sector(lba) ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "diskwrite")) {
+        int ok = 0;
+        char text[128];
+
+        if (line->count < 3) {
+            terminal_write("diskwrite: usage diskwrite <lba> <text>\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        uint32_t lba = string_to_uint(line->args[1], &ok);
+        if (!ok) {
+            terminal_write("diskwrite: invalid lba\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        shell_join_args(line, 2, text, sizeof(text));
+        *last_status = ata_write_text_sector(lba, text) ? 0 : 1;
+        if (*last_status == 0) {
+            terminal_write("Wrote sector ");
+            terminal_write_dec(lba);
+            terminal_write("\n");
+        } else {
+            terminal_write("diskwrite: unable to write sector\n");
+        }
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfsformat")) {
+        *last_status = kfs_format() ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfsinfo")) {
+        *last_status = kfs_print_info() ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfsls")) {
+        *last_status = kfs_list() ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfssave")) {
+        char text[128];
+
+        if (line->count < 3) {
+            terminal_write("kfssave: usage kfssave <name> <text>\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        shell_join_args(line, 2, text, sizeof(text));
+        *last_status = kfs_save_text(line->args[1], text) ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfscat")) {
+        if (line->count < 2) {
+            terminal_write("kfscat: usage kfscat <name>\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        *last_status = kfs_cat(line->args[1]) ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfsstat")) {
+        if (line->count < 2) {
+            terminal_write("kfsstat: usage kfsstat <name>\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        *last_status = kfs_stat(line->args[1]) ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfsrm")) {
+        if (line->count < 2) {
+            terminal_write("kfsrm: usage kfsrm <name>\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        *last_status = kfs_remove(line->args[1]) ? 0 : 1;
         return 1;
     }
 

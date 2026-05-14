@@ -6,11 +6,13 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 160
+$KernelSectors = 192
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
 $ImagePath = Join-Path $BuildDir "kernel1.img"
+$DataImagePath = Join-Path $BuildDir "data.img"
+$DataImageBytes = 1024 * 1024
 
 function Require-Command($Name) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -151,7 +153,13 @@ $image = New-Object byte[] (512 + $KernelBytes + $InitrdBytes)
 
 Write-Host "Built $ImagePath"
 
+if (-not (Test-Path $DataImagePath)) {
+    $dataImage = New-Object byte[] $DataImageBytes
+    [System.IO.File]::WriteAllBytes($DataImagePath, $dataImage)
+    Write-Host "Created $DataImagePath"
+}
+
 if ($Run) {
     Require-Command "qemu-system-i386"
-    qemu-system-i386 -drive format=raw,file="$ImagePath"
+    qemu-system-i386 -drive if=ide,index=0,format=raw,file="$ImagePath" -drive if=ide,index=1,format=raw,file="$DataImagePath"
 }

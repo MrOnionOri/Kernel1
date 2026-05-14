@@ -177,6 +177,22 @@ static int path_is_direct_child(const char* parent, const char* child) {
     return 1;
 }
 
+static int path_is_descendant(const char* parent, const char* child) {
+    const char* normalized_parent = path_without_leading_slash(parent);
+    const char* normalized_child = path_without_leading_slash(child);
+    uint32_t parent_length = string_length(normalized_parent);
+
+    if (path_is_root(normalized_parent)) {
+        return normalized_child[0] != '\0';
+    }
+
+    if (!string_starts_with(normalized_child, normalized_parent)) {
+        return 0;
+    }
+
+    return normalized_child[parent_length] == '/';
+}
+
 static int path_child_name(const char* parent, const char* child, char* output,
         uint32_t size, int* is_directory) {
     const char* normalized_parent = path_without_leading_slash(parent);
@@ -1073,6 +1089,38 @@ int vfs_remove(const char* path) {
                 terminal_write(path);
                 terminal_write("\n");
                 return 0;
+            }
+        }
+    }
+
+    node->used = 0;
+    node->path[0] = '\0';
+    kfree(node->data);
+    node->data = 0;
+    node->size = 0;
+    node->capacity = 0;
+    return 1;
+}
+
+int vfs_remove_recursive(const char* path) {
+    struct ramfs_node* node = ramfs_find(path);
+
+    if (node == 0) {
+        terminal_write("rm: not found or read-only: ");
+        terminal_write(path);
+        terminal_write("\n");
+        return 0;
+    }
+
+    if (node->type == RAMFS_DIRECTORY) {
+        for (uint32_t i = 0; i < RAMFS_MAX_NODES; i++) {
+            if (ramfs_nodes[i].used && path_is_descendant(node->path, ramfs_nodes[i].path)) {
+                ramfs_nodes[i].used = 0;
+                ramfs_nodes[i].path[0] = '\0';
+                kfree(ramfs_nodes[i].data);
+                ramfs_nodes[i].data = 0;
+                ramfs_nodes[i].size = 0;
+                ramfs_nodes[i].capacity = 0;
             }
         }
     }

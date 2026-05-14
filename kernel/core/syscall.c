@@ -208,6 +208,18 @@ static int32_t syscall_append_file(const char* path, const char* text) {
     return vfs_append_text(path, text) ? 0 : -1;
 }
 
+static int32_t syscall_mkdir(const char* path) {
+    if (!user_string_is_valid(path)) {
+        return -1;
+    }
+
+    if (vfs_is_directory(path)) {
+        return 0;
+    }
+
+    return vfs_mkdir(path) ? 0 : -1;
+}
+
 void syscall_dispatch(struct interrupt_frame* frame) {
     switch (frame->eax) {
         case SYS_WRITE:
@@ -255,6 +267,9 @@ void syscall_dispatch(struct interrupt_frame* frame) {
             break;
         case SYS_APPEND_FILE:
             frame->eax = (uint32_t)syscall_append_file((const char*)frame->ebx, (const char*)frame->ecx);
+            break;
+        case SYS_MKDIR:
+            frame->eax = (uint32_t)syscall_mkdir((const char*)frame->ebx);
             break;
         default:
             terminal_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);

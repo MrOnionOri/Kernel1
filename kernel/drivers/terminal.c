@@ -5,7 +5,7 @@
 #include <stddef.h>
 
 #define VGA_WIDTH 80
-#define VGA_HEIGHT 25
+#define VGA_HEIGHT 50
 #define VGA_MEMORY ((volatile uint16_t*)0xB8000)
 #define VGA_CTRL_REGISTER 0x3D4
 #define VGA_DATA_REGISTER 0x3D5

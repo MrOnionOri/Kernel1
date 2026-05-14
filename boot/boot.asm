@@ -7,7 +7,7 @@
 
 KERNEL_OFFSET equ 0x10000
 KERNEL_LOAD_SEGMENT equ 0x1000
-KERNEL_SECTORS equ 176
+KERNEL_SECTORS equ 208
 KERNEL_READ_CHUNK equ 8
 MEMORY_MAP_ADDR equ 0x9000
 MEMORY_MAP_ENTRIES equ MEMORY_MAP_ADDR + 4
@@ -23,6 +23,8 @@ start:
     sti
 
     mov [boot_drive], dl
+
+    call set_text_mode_80x50
 
     mov si, msg_loading
     call print_string
@@ -43,6 +45,14 @@ print_string:
     int 0x10
     jmp print_string
 .done:
+    ret
+
+set_text_mode_80x50:
+    mov ax, 0x0003
+    int 0x10
+    mov ax, 0x1112
+    xor bx, bx
+    int 0x10
     ret
 
 load_kernel:

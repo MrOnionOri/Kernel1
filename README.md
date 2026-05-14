@@ -125,6 +125,11 @@ Syscalls actuales:
 9 SYS_READ       ebx=fd ecx=buffer edx=len    retorna bytes leidos o -1
 10 SYS_CLOSE     ebx=fd                       retorna 0 o -1
 11 SYS_GETARGS   ebx=buffer ecx=len           retorna bytes copiados
+12 SYS_WRITE_FILE ebx=path ecx=string_c       retorna 0 o -1
+13 SYS_APPEND_FILE ebx=path ecx=string_c      retorna 0 o -1
+14 SYS_OPEN_FLAGS ebx=path ecx=flags          retorna fd o -1
+15 SYS_WRITE_FD  ebx=fd ecx=buffer edx=len    retorna bytes escritos o -1
+16 SYS_MKDIR     ebx=path                     retorna 0 o -1
 ```
 
 Por ahora `SYS_WRITE_BUF` soporta `fd=1` para stdout.

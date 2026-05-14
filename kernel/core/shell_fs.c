@@ -348,8 +348,24 @@ int shell_fs_handle_line(const struct shell_line* line, int* last_status) {
 
     if (string_equals(line->args[0], "rm")) {
         if (line->count < 2) {
-            terminal_write("rm: usage rm <path>\n");
+            terminal_write("rm: usage rm [-r] <path>\n");
             *last_status = 1;
+        } else if (string_equals(line->args[1], "-r")) {
+            if (line->count < 3) {
+                terminal_write("rm: usage rm -r <path>\n");
+                *last_status = 1;
+            } else {
+                char path[SHELL_FS_PATH_SIZE];
+                shell_fs_resolve_path(line->args[2], path, sizeof(path));
+                if (vfs_remove_recursive(path)) {
+                    terminal_write("Removed recursively: ");
+                    terminal_write(path);
+                    terminal_write("\n");
+                    *last_status = 0;
+                } else {
+                    *last_status = 1;
+                }
+            }
         } else {
             char path[SHELL_FS_PATH_SIZE];
             shell_fs_resolve_path(line->args[1], path, sizeof(path));

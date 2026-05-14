@@ -5,6 +5,7 @@ SYS_WRITE_BUF equ 7
 SYS_GETARGS equ 11
 SYS_OPEN_FLAGS equ 14
 SYS_WRITE_FD equ 15
+SYS_MKDIR equ 16
 SYS_CLOSE equ 10
 STDOUT_FD equ 1
 VFS_O_WRITE equ 0x02
@@ -36,6 +37,10 @@ start:
     mov ebp, eax
 
 .open_log:
+    mov eax, SYS_MKDIR
+    lea ebx, [esi + log_dir - .base]
+    int 0x80
+
     mov eax, SYS_OPEN_FLAGS
     lea ebx, [esi + log_path - .base]
     mov ecx, LOG_FLAGS
@@ -112,6 +117,7 @@ default_message_len equ $ - default_message
 newline db 10
 ok_message db "[logger.kapp] wrote tmp/app.log via fd", 10
 ok_message_len equ $ - ok_message
-fail_message db "[logger.kapp] failed; try: mkdir tmp", 10
+fail_message db "[logger.kapp] failed to write tmp/app.log", 10
 fail_message_len equ $ - fail_message
+log_dir db "tmp", 0
 args_buffer times ARGS_SIZE + 1 db 0

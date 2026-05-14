@@ -23,6 +23,7 @@ int vfs_append_text(const char* path, const char* text);
 int vfs_copy(const char* source_path, const char* destination_path);
 int vfs_move(const char* source_path, const char* destination_path);
 int vfs_remove(const char* path);
+int vfs_remove_recursive(const char* path);
 void vfs_list(void);
 void vfs_list_path(const char* path);
 void vfs_cat(const char* path);

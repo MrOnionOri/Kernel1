@@ -36,6 +36,9 @@ static const char* shell_commands[] = {
     "cd",
     "clear",
     "cp",
+    "diskinfo",
+    "diskread",
+    "diskwrite",
     "echo",
     "env",
     "exit",
@@ -49,6 +52,13 @@ static const char* shell_commands[] = {
     "ifset",
     "initrd",
     "kapp",
+    "kfscat",
+    "kfsformat",
+    "kfsinfo",
+    "kfsls",
+    "kfsrm",
+    "kfssave",
+    "kfsstat",
     "kill",
     "kmalloc",
     "ls",
@@ -57,7 +67,9 @@ static const char* shell_commands[] = {
     "mv",
     "paging",
     "pmm",
+    "ps",
     "pwd",
+    "reap",
     "ring3",
     "run",
     "runall",
@@ -570,7 +582,7 @@ static void shell_execute_command(void) {
     }
 
     if (string_equals(command_buffer, "help")) {
-        terminal_write("Commands: help, history, env, set <name> <value>, unset <name>, alias <name> <cmd>, unalias <name>, aliases, source <file> [args], exit <code>, foreach <var> <items...> do <cmd>, ifset <var> <cmd>, ifnotset <var> <cmd>, ifeq <a> <b> <cmd>, ifneq <a> <b> <cmd>, echo <text> [> file|>> file], clear, pwd, cd <dir>, ls, tree, cat <file>, stat <path>, cp <src> <dst>, mv <src> <dst>, mkdir [-p] <dir>, touch <file>, write <file> <text>, append <file> <text>, rm <path>, kapp <file>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, spawn <app>, run <app>, runall, kill <id>, wait <id>, tasks, tasksv, about\n");
+        terminal_write("Commands: help, history, env, set <name> <value>, unset <name>, alias <name> <cmd>, unalias <name>, aliases, source <file> [args], exit <code>, foreach <var> <items...> do <cmd>, ifset <var> <cmd>, ifnotset <var> <cmd>, ifeq <a> <b> <cmd>, ifneq <a> <b> <cmd>, echo <text> [> file|>> file], clear, pwd, cd <dir>, ls, tree, cat <file>, stat <path>, cp <src> <dst>, mv <src> <dst>, mkdir [-p] <dir>, touch <file>, write <file> <text>, append <file> <text>, rm [-r] <path>, kapp <file>, diskinfo, diskread <lba>, diskwrite <lba> <text>, kfsformat, kfsinfo, kfsls, kfssave <name> <text>, kfscat <name>, kfsstat <name>, kfsrm <name>, ticks, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, spawn <app>, run <app>, runall, kill <id>, wait <id>, reap, ps, ps -v, tasks, tasksv, about\n");
     } else if (string_equals(command_buffer, "clear")) {
         terminal_initialize();
         terminal_write("Kernel1 shell\n");
@@ -683,7 +695,7 @@ void shell_complete(void) {
             shell_complete_path_command("ls ") ||
             shell_complete_path_command("cd ") ||
             shell_complete_last_path_argument("mv ") ||
-            shell_complete_path_command("rm ") ||
+            shell_complete_last_path_argument("rm ") ||
             shell_complete_path_command("source ") ||
             shell_complete_path_command("stat ") ||
             shell_complete_path_command("tree ") ||

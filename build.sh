@@ -2,11 +2,13 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-KERNEL_SECTORS=160
+KERNEL_SECTORS=192
 KERNEL_BYTES=$((KERNEL_SECTORS * 512))
 INITRD_SECTORS=16
 INITRD_BYTES=$((INITRD_SECTORS * 512))
 IMAGE_PATH="$BUILD_DIR/kernel1.img"
+DATA_IMAGE_PATH="$BUILD_DIR/data.img"
+DATA_IMAGE_BYTES=$((1024 * 1024))
 
 RUN=0
 CLEAN=0
@@ -169,7 +171,14 @@ truncate -s $((512 + KERNEL_BYTES + INITRD_BYTES)) "$IMAGE_PATH"
 
 echo "Built $IMAGE_PATH"
 
+if [[ ! -f "$DATA_IMAGE_PATH" ]]; then
+    truncate -s "$DATA_IMAGE_BYTES" "$DATA_IMAGE_PATH"
+    echo "Created $DATA_IMAGE_PATH"
+fi
+
 if [[ "$RUN" -eq 1 ]]; then
     require_command qemu-system-i386
-    qemu-system-i386 -drive format=raw,file="$IMAGE_PATH"
+    qemu-system-i386 \
+        -drive if=ide,index=0,format=raw,file="$IMAGE_PATH" \
+        -drive if=ide,index=1,format=raw,file="$DATA_IMAGE_PATH"
 fi
