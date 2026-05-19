@@ -70,6 +70,11 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
         return 1;
     }
 
+    if (string_equals(line->args[0], "df") || string_equals(line->args[0], "diskfree")) {
+        *last_status = kfs_print_usage() ? 0 : 1;
+        return 1;
+    }
+
     if (string_equals(line->args[0], "diskread")) {
         int ok = 0;
 
@@ -121,6 +126,17 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
 
     if (string_equals(line->args[0], "kfsformat")) {
         *last_status = kfs_format() ? 0 : 1;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "kfscheck")) {
+        if (line->count > 2 || (line->count == 2 && !string_equals(line->args[1], "-v"))) {
+            terminal_write("kfscheck: usage kfscheck [-v]\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        *last_status = kfs_check(line->count == 2) ? 0 : 1;
         return 1;
     }
 

@@ -2,13 +2,15 @@
 
 #include "heap.h"
 #include "initrd.h"
+#include "kfs.h"
 #include "terminal.h"
 
 #define VFS_MAX_OPEN_FILES 8
 #define VFS_CAT_BUFFER_SIZE 64
+#define VFS_KFS_FILE_BUFFER_SIZE 4097
 #define RAMFS_MAX_NODES 16
 #define RAMFS_MAX_PATH 48
-#define RAMFS_MAX_FILE_SIZE 1024
+#define RAMFS_MAX_FILE_SIZE 4096
 #define VFS_MAX_SEEN_DIRS 8
 
 struct vfs_handle {
@@ -18,6 +20,7 @@ struct vfs_handle {
     uint32_t offset;
     int readable;
     int writable;
+    int owns_data;
     uint32_t flags;
     struct ramfs_node* node;
 };
@@ -38,9 +41,11 @@ struct ramfs_node {
 
 static struct vfs_handle handles[VFS_MAX_OPEN_FILES];
 static struct ramfs_node ramfs_nodes[RAMFS_MAX_NODES];
+static char kfs_file_buffers[VFS_MAX_OPEN_FILES][VFS_KFS_FILE_BUFFER_SIZE];
 
 static void string_copy(char* destination, const char* source, uint32_t size);
 static int ramfs_write_data(const char* path, const char* data, uint32_t size, const char* command_name);
+static const char* kfs_file_name(const char* path);
 
 struct vfs_list_context {
     const char* path;
@@ -109,6 +114,25 @@ static const char* path_without_leading_slash(const char* path) {
     }
 
     return path;
+}
+
+static int path_is_kfs_root(const char* path) {
+    return string_equals(path_without_leading_slash(path), "disk");
+}
+
+static const char* kfs_file_name(const char* path) {
+    const char* normalized = path_without_leading_slash(path);
+
+    if (!string_starts_with(normalized, "disk/")) {
+        return 0;
+    }
+
+    const char* name = normalized + 5;
+    if (name[0] == '\0') {
+        return 0;
+    }
+
+    return name;
 }
 
 static int path_has_valid_name(const char* path) {
@@ -291,7 +315,20 @@ static void string_copy(char* destination, const char* source, uint32_t size) {
 struct vfs_complete_context {
     const char* prefix;
     const char* match;
+    char match_buffer[RAMFS_MAX_PATH];
     int ambiguous;
+};
+
+struct kfs_print_context {
+    const char* parent;
+    int printed_any;
+    char seen_dirs[VFS_MAX_SEEN_DIRS][RAMFS_MAX_PATH];
+    uint32_t seen_dir_count;
+};
+
+struct kfs_complete_context {
+    struct vfs_complete_context* complete;
+    char candidate[RAMFS_MAX_PATH];
 };
 
 static void vfs_complete_visit_root(const char* candidate, struct vfs_complete_context* context) {
@@ -304,7 +341,27 @@ static void vfs_complete_visit_root(const char* candidate, struct vfs_complete_c
         return;
     }
 
-    context->match = candidate;
+    string_copy(context->match_buffer, candidate, sizeof(context->match_buffer));
+    context->match = context->match_buffer;
+}
+
+static void vfs_complete_visit_kfs(const char* name, uint32_t size,
+        uint32_t data_lba, int is_directory, void* raw_context) {
+    struct kfs_complete_context* context = (struct kfs_complete_context*)raw_context;
+    (void)size;
+    (void)data_lba;
+    (void)is_directory;
+
+    string_copy(context->candidate, "disk/", sizeof(context->candidate));
+    uint32_t index = 5;
+    uint32_t source = 0;
+
+    while (index < sizeof(context->candidate) - 1 && name[source] != '\0') {
+        context->candidate[index++] = name[source++];
+    }
+
+    context->candidate[index] = '\0';
+    vfs_complete_visit_root(context->candidate, context->complete);
 }
 
 static void vfs_complete_visit_file(const struct initrd_file* file, void* raw_context) {
@@ -371,6 +428,38 @@ static void vfs_print_ramfs_entry(struct ramfs_node* node, struct vfs_list_conte
     }
 
     list->printed_any = 1;
+}
+
+static void vfs_print_kfs_entry(const char* name, uint32_t size,
+        uint32_t data_lba, int is_directory, void* raw_context) {
+    struct kfs_print_context* context = (struct kfs_print_context*)raw_context;
+    char child_name[RAMFS_MAX_PATH];
+    int child_is_directory = 0;
+    (void)data_lba;
+
+    if (!path_child_name(context->parent, name, child_name, sizeof(child_name),
+            &child_is_directory)) {
+        return;
+    }
+
+    if (is_directory || child_is_directory) {
+        if (vfs_list_dir_seen((struct vfs_list_context*)context, child_name)) {
+            return;
+        }
+
+        terminal_write("  ");
+        terminal_write(child_name);
+        terminal_write("/  <disk>\n");
+        context->printed_any = 1;
+        return;
+    }
+
+    terminal_write("  ");
+    terminal_write(child_name);
+    terminal_write("  ");
+    terminal_write_dec(size);
+    terminal_write(" bytes  <disk>\n");
+    context->printed_any = 1;
 }
 
 struct vfs_dir_exists_context {
@@ -450,6 +539,10 @@ static uint32_t vfs_count_children(const char* path) {
         if (ramfs_nodes[i].used && path_is_direct_child(path, ramfs_nodes[i].path)) {
             context.count++;
         }
+    }
+
+    if (path_is_root(path)) {
+        context.count++;
     }
 
     return context.count;
@@ -556,6 +649,7 @@ static void vfs_tree_dir(const char* path, uint32_t depth) {
 int vfs_open(const char* path) {
     struct initrd_file file;
     struct ramfs_node* node = ramfs_find(path);
+    const char* disk_name = kfs_file_name(path);
 
     if (node != 0) {
         if (node->type != RAMFS_FILE) {
@@ -570,8 +664,39 @@ int vfs_open(const char* path) {
                 handles[i].offset = 0;
                 handles[i].readable = 1;
                 handles[i].writable = 0;
+                handles[i].owns_data = 0;
                 handles[i].flags = VFS_O_READ;
                 handles[i].node = node;
+                return (int)i;
+            }
+        }
+
+        return VFS_INVALID_FD;
+    }
+
+    if (disk_name != 0) {
+        for (uint32_t i = 0; i < VFS_MAX_OPEN_FILES; i++) {
+            if (!handles[i].used) {
+                uint32_t size = 0;
+
+                if (!kfs_read_text(disk_name, kfs_file_buffers[i],
+                        VFS_KFS_FILE_BUFFER_SIZE, &size)) {
+                    return VFS_INVALID_FD;
+                }
+
+                if (size >= VFS_KFS_FILE_BUFFER_SIZE) {
+                    size = VFS_KFS_FILE_BUFFER_SIZE - 1;
+                }
+
+                handles[i].used = 1;
+                handles[i].data = kfs_file_buffers[i];
+                handles[i].size = size;
+                handles[i].offset = 0;
+                handles[i].readable = 1;
+                handles[i].writable = 0;
+                handles[i].owns_data = 0;
+                handles[i].flags = VFS_O_READ;
+                handles[i].node = 0;
                 return (int)i;
             }
         }
@@ -591,6 +716,7 @@ int vfs_open(const char* path) {
             handles[i].offset = 0;
             handles[i].readable = 1;
             handles[i].writable = 0;
+            handles[i].owns_data = 0;
             handles[i].flags = VFS_O_READ;
             handles[i].node = 0;
             return (int)i;
@@ -641,6 +767,7 @@ int vfs_open_flags(const char* path, uint32_t flags) {
             handles[i].offset = (flags & VFS_O_APPEND) ? node->size : 0;
             handles[i].readable = (flags & VFS_O_READ) != 0;
             handles[i].writable = 1;
+            handles[i].owns_data = 0;
             handles[i].flags = flags;
             handles[i].node = node;
             return (int)i;
@@ -731,12 +858,17 @@ void vfs_close(int fd) {
         return;
     }
 
+    if (handles[fd].owns_data && handles[fd].data != 0) {
+        kfree((void*)handles[fd].data);
+    }
+
     handles[fd].used = 0;
     handles[fd].data = 0;
     handles[fd].size = 0;
     handles[fd].offset = 0;
     handles[fd].readable = 0;
     handles[fd].writable = 0;
+    handles[fd].owns_data = 0;
     handles[fd].flags = 0;
     handles[fd].node = 0;
 }
@@ -746,6 +878,7 @@ int vfs_complete_path(const char* prefix, char* output, uint32_t size) {
     context.prefix = prefix;
     context.match = 0;
     context.ambiguous = 0;
+    context.match_buffer[0] = '\0';
 
     if (prefix[0] == '/' && prefix[1] != '\0') {
         context.prefix = prefix + 1;
@@ -755,8 +888,19 @@ int vfs_complete_path(const char* prefix, char* output, uint32_t size) {
         vfs_complete_visit_root("apps", &context);
     }
 
+    if (string_starts_with("disk", context.prefix)) {
+        vfs_complete_visit_root("disk", &context);
+    }
+
     initrd_for_each(vfs_complete_visit_file, &context);
     vfs_complete_visit_ramfs(&context);
+
+    if (string_starts_with(context.prefix, "disk/")) {
+        struct kfs_complete_context kfs_context;
+        kfs_context.complete = &context;
+        kfs_context.candidate[0] = '\0';
+        kfs_for_each(vfs_complete_visit_kfs, &kfs_context);
+    }
 
     if (context.match == 0 || context.ambiguous) {
         return 0;
@@ -772,6 +916,15 @@ int vfs_is_directory(const char* path) {
 
     if (path_is_root(path)) {
         return 1;
+    }
+
+    if (path_is_kfs_root(path)) {
+        return 1;
+    }
+
+    const char* disk_name = kfs_file_name(path);
+    if (disk_name != 0) {
+        return kfs_is_directory(disk_name);
     }
 
     if (node != 0 && node->type == RAMFS_DIRECTORY) {
@@ -791,6 +944,16 @@ int vfs_mkdir(const char* path) {
     if (!path_has_valid_name(path)) {
         terminal_write("mkdir: invalid path\n");
         return 0;
+    }
+
+    if (path_is_kfs_root(path)) {
+        terminal_write("mkdir: already exists: disk\n");
+        return 0;
+    }
+
+    const char* disk_name = kfs_file_name(path);
+    if (disk_name != 0) {
+        return kfs_mkdir(disk_name);
     }
 
     if (vfs_is_directory(path) || ramfs_find(path) != 0) {
@@ -904,6 +1067,12 @@ static int ramfs_write_data(const char* path, const char* data, uint32_t size, c
 }
 
 int vfs_write_text(const char* path, const char* text) {
+    const char* disk_name = kfs_file_name(path);
+
+    if (disk_name != 0) {
+        return kfs_save_text(disk_name, text);
+    }
+
     return ramfs_write_data(path, text, string_length(text), "write");
 }
 
@@ -914,6 +1083,11 @@ int vfs_append_text(const char* path, const char* text) {
     uint32_t append_size = string_length(text);
     uint32_t new_size;
     char* buffer;
+    const char* disk_name = kfs_file_name(path);
+
+    if (disk_name != 0) {
+        return kfs_append_text(disk_name, text);
+    }
 
     if (node != 0 && node->type == RAMFS_DIRECTORY) {
         terminal_write("append: is a directory: ");
@@ -1023,7 +1197,8 @@ int vfs_copy(const char* source_path, const char* destination_path) {
     }
 
     vfs_close(fd);
-    int ok = ramfs_write_data(destination_path, buffer, total, "cp");
+    buffer[total] = '\0';
+    int ok = vfs_write_text(destination_path, buffer);
     kfree(buffer);
     return ok;
 }
@@ -1074,6 +1249,11 @@ int vfs_move(const char* source_path, const char* destination_path) {
 
 int vfs_remove(const char* path) {
     struct ramfs_node* node = ramfs_find(path);
+    const char* disk_name = kfs_file_name(path);
+
+    if (disk_name != 0) {
+        return kfs_remove(disk_name);
+    }
 
     if (node == 0) {
         terminal_write("rm: not found or read-only: ");
@@ -1104,6 +1284,16 @@ int vfs_remove(const char* path) {
 
 int vfs_remove_recursive(const char* path) {
     struct ramfs_node* node = ramfs_find(path);
+    const char* disk_name = kfs_file_name(path);
+
+    if (path_is_kfs_root(path)) {
+        terminal_write("rm: refusing to remove disk mount\n");
+        return 0;
+    }
+
+    if (disk_name != 0) {
+        return kfs_remove(disk_name);
+    }
 
     if (node == 0) {
         terminal_write("rm: not found or read-only: ");
@@ -1147,6 +1337,36 @@ void vfs_list_path(const char* path) {
     if (path[0] == '\0' || string_equals(path, "/")) {
         terminal_write("Files /:\n");
         initrd_for_each(vfs_print_initrd_entry, &context);
+        terminal_write("  disk/\n");
+        context.printed_any = 1;
+    } else if (path_is_kfs_root(path)) {
+        struct kfs_print_context kfs_context;
+        kfs_context.parent = "";
+        kfs_context.printed_any = 0;
+        kfs_context.seen_dir_count = 0;
+
+        terminal_write("Files /disk:\n");
+        if (!kfs_for_each(vfs_print_kfs_entry, &kfs_context)) {
+            terminal_write("  <not formatted>\n");
+        } else if (!kfs_context.printed_any) {
+            terminal_write("  <empty>\n");
+        }
+        return;
+    } else if (kfs_file_name(path) != 0 && vfs_is_directory(path)) {
+        struct kfs_print_context kfs_context;
+        kfs_context.parent = kfs_file_name(path);
+        kfs_context.printed_any = 0;
+        kfs_context.seen_dir_count = 0;
+
+        terminal_write("Files /");
+        terminal_write(path_without_leading_slash(path));
+        terminal_write(":\n");
+        if (!kfs_for_each(vfs_print_kfs_entry, &kfs_context)) {
+            terminal_write("  <not formatted>\n");
+        } else if (!kfs_context.printed_any) {
+            terminal_write("  <empty>\n");
+        }
+        return;
     } else if (vfs_is_directory(path)) {
         terminal_write("Files /");
         terminal_write(path_without_leading_slash(path));
@@ -1208,6 +1428,7 @@ void vfs_stat(const char* path) {
     const char* normalized = path_without_leading_slash(path);
     struct ramfs_node* node = ramfs_find(path);
     struct initrd_file file;
+    const char* disk_name = kfs_file_name(path);
 
     terminal_write("Path: /");
     terminal_write(normalized);
@@ -1220,6 +1441,19 @@ void vfs_stat(const char* path) {
         terminal_write("Children: ");
         terminal_write_dec(vfs_count_children(path));
         terminal_write("\n");
+        return;
+    }
+
+    if (path_is_kfs_root(path)) {
+        terminal_write("Type: directory\n");
+        terminal_write("Source: kfs mount\n");
+        terminal_write("Writable: yes\n");
+        return;
+    }
+
+    if (disk_name != 0) {
+        terminal_write("Source: kfs\n");
+        kfs_stat(disk_name);
         return;
     }
 
@@ -1283,6 +1517,34 @@ void vfs_tree(const char* path) {
         terminal_write("/");
         terminal_write(normalized);
         terminal_write("/\n");
+    }
+
+    if (path_is_root(path)) {
+        terminal_write("  disk/\n");
+    }
+
+    if (path_is_kfs_root(path)) {
+        struct kfs_print_context kfs_context;
+        kfs_context.parent = "";
+        kfs_context.printed_any = 0;
+        kfs_context.seen_dir_count = 0;
+        kfs_for_each(vfs_print_kfs_entry, &kfs_context);
+        if (!kfs_context.printed_any) {
+            terminal_write("  <empty>\n");
+        }
+        return;
+    }
+
+    if (kfs_file_name(path) != 0 && vfs_is_directory(path)) {
+        struct kfs_print_context kfs_context;
+        kfs_context.parent = kfs_file_name(path);
+        kfs_context.printed_any = 0;
+        kfs_context.seen_dir_count = 0;
+        kfs_for_each(vfs_print_kfs_entry, &kfs_context);
+        if (!kfs_context.printed_any) {
+            terminal_write("  <empty>\n");
+        }
+        return;
     }
 
     vfs_tree_dir(path, 1);

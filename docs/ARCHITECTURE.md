@@ -86,11 +86,12 @@ This keeps `shell.c` from becoming the owner of every feature. New command
 families should generally get their own module and a small `*_handle_line`
 function.
 
-## VFS, Initrd, And RAM Files
+## VFS, Initrd, RAM, And Disk Files
 
-The kernel has a VFS-style interface over the current in-memory filesystem.
-It supports opening, reading, writing, appending, copying, moving, removing,
-directory creation, path completion, and tree/list/stat views.
+The kernel has a VFS-style interface over initrd, the in-memory filesystem, and
+the persistent KFS disk mount at `/disk`. It supports opening, reading, writing,
+appending, copying, moving, removing, directory creation, path completion, and
+tree/list/stat views.
 
 The initrd uses format `K1RD2`:
 
@@ -114,8 +115,8 @@ readme.txt
 docs/kapp.txt
 ```
 
-Writable files currently live in RAM. This is safe for experimentation because
-the OS is not writing to the host disk directly.
+Writable files without a `/disk` prefix currently live in RAM. Files under
+`/disk` are persisted into the QEMU-only KFS data image.
 
 ## Disk Work
 
@@ -127,11 +128,13 @@ Current disk commands:
 
 ```text
 diskinfo         show ATA identify data
+df               show KFS disk usage, including used/free sectors and bytes
 diskread <lba>   dump one 512-byte sector in hex/ascii
 diskwrite <lba> <text>
                  overwrite one sector with text and zero-fill the rest
-kfsformat        write a KFS1 superblock and clear the directory area
-kfsinfo          show KFS1 superblock metadata
+kfsformat        write a KFS superblock and clear the directory area
+kfscheck [-v]    verify the KFS superblock, bitmap, directory entries, and block chains
+kfsinfo          show KFS superblock metadata
 kfsls           list persistent KFS files
 kfssave <name> <text>
                 save one small text file into KFS
@@ -140,10 +143,27 @@ kfsstat <name>  show one KFS file's slot, data sector, and size
 kfsrm <name>    remove one KFS file and clear its data sector
 ```
 
+KFS is also mounted into the normal VFS at `/disk`, so the shell can use common
+commands on persistent files:
+
+```text
+ls /disk
+mkdir /disk/docs
+write /disk/note hello
+append /disk/note " again"
+write /disk/docs/note hello
+cat /disk/note
+stat /disk/note
+rm /disk/note
+```
+
 This stage writes only to QEMU's secondary `build/data.img`, not to the boot
-image or host disks. KFS1 currently reserves sector 0 as the superblock, sectors
-1-4 as the directory area, and starts file data at sector 5. The first file
-implementation stores one small file per sector.
+image or host disks. KFS currently reserves sector 0 as the superblock, sectors
+1-4 as the directory area, sector 5 as the allocation bitmap, and starts file
+data at sector 6. Directory entries can represent either files or directories.
+File entries store the first data block; each data block stores a pointer to the
+next block followed by file bytes, so files can use non-contiguous sectors. The
+current maximum is 4096 bytes per file.
 
 ## Apps And KAPP
 
@@ -227,7 +247,7 @@ Working pieces:
 - PMM and kernel heap.
 - Shell with history, cursor editing, TAB completion, variables, aliases,
   redirection, conditionals, loops, and scripts.
-- VFS/RAM filesystem with initrd import.
+- VFS over initrd, RAM files, and the `/disk` KFS mount.
 - Built-in user apps and KAPP apps.
 - Basic task table and foreground/background execution flow.
 
@@ -235,13 +255,11 @@ Working pieces:
 
 Recommended next steps:
 
-1. Add small UX features: `mkdir -p`, `touch`, better command error statuses.
-2. Make app behavior friendlier, for example letting `logger` create `tmp`
+1. Make app behavior friendlier, for example letting `logger` create `tmp`
    automatically or accept a configurable log path.
-3. Add `kill`/`wait` or richer task lifecycle controls.
-4. Start a safe virtual disk driver in QEMU, initially isolated from real host
-   disks.
-5. Formalize KAPP metadata: version, permissions, required syscalls, and app
+2. Add larger directories and longer path/name support.
+3. Add richer task lifecycle controls and scheduler cleanup.
+4. Formalize KAPP metadata: version, permissions, required syscalls, and app
    name in the binary format.
-6. After disk/process basics are stable, begin graphics groundwork: framebuffer,
+5. After disk/process basics are stable, begin graphics groundwork: framebuffer,
    mouse/events, and a small UI server.
