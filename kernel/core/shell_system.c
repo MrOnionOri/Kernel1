@@ -6,6 +6,7 @@
 #include "kfs.h"
 #include "memory_map.h"
 #include "pmm.h"
+#include "task.h"
 #include "terminal.h"
 #include "timer.h"
 #include "user_mode.h"
@@ -50,6 +51,25 @@ static uint32_t string_to_uint(const char* text, int* ok) {
 }
 
 int shell_system_handle_line(const struct shell_line* line, int* last_status) {
+    if (string_equals(line->args[0], "sched")) {
+        if (line->count == 1) {
+            scheduler_print_status();
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals(line->args[1], "cooperative")) {
+            scheduler_set_mode(SCHEDULER_COOPERATIVE);
+            terminal_write("Scheduler mode: cooperative\n");
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals(line->args[1], "auto")) {
+            scheduler_set_mode(SCHEDULER_AUTO);
+            terminal_write("Scheduler mode: auto (timer hook pending)\n");
+            *last_status = 0;
+        } else {
+            terminal_write("sched: usage sched [cooperative|auto]\n");
+            *last_status = 1;
+        }
+        return 1;
+    }
+
     if (string_equals(line->args[0], "ticks")) {
         terminal_write("Timer ticks: ");
         terminal_write_dec(timer_ticks());

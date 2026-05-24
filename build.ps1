@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 216
+$KernelSectors = 232
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
@@ -87,48 +87,50 @@ function Add-Record($Name, [byte[]]$Data) {
     Add-U32 $Data.Length
     $initrdBytesList.AddRange($Data)
 }
+function Add-U32-ToList($List, [int]$Value) {
+    $List.Add([byte]($Value -band 0xFF))
+    $List.Add([byte](($Value -shr 8) -band 0xFF))
+    $List.Add([byte](($Value -shr 16) -band 0xFF))
+    $List.Add([byte](($Value -shr 24) -band 0xFF))
+}
+function New-Kapp([string]$Name, [byte[]]$Payload, [int]$RequiredSyscalls) {
+    $kapp = New-Object System.Collections.Generic.List[byte]
+    $kapp.AddRange([byte[]][System.Text.Encoding]::ASCII.GetBytes("KAPP"))
+    foreach ($value in @(64, 0, $Payload.Length, 0, 1, $RequiredSyscalls)) {
+        Add-U32-ToList $kapp $value
+    }
+
+    $nameBytes = [System.Text.Encoding]::ASCII.GetBytes($Name)
+    for ($i = 0; $i -lt 32; $i++) {
+        if ($i -lt $nameBytes.Length) {
+            $kapp.Add($nameBytes[$i])
+        } else {
+            $kapp.Add(0)
+        }
+    }
+
+    Add-U32-ToList $kapp 0
+    $kapp.AddRange($Payload)
+    return [byte[]]$kapp.ToArray()
+}
 
 Add-Ascii "K1RD2"
 $initrdBytesList.Add(0)
 $helloPayload = [System.IO.File]::ReadAllBytes("$BuildDir/hello.payload")
 $echoPayload = [System.IO.File]::ReadAllBytes("$BuildDir/echo.payload")
 $loggerPayload = [System.IO.File]::ReadAllBytes("$BuildDir/logger.payload")
-$helloKapp = New-Object System.Collections.Generic.List[byte]
-$helloKapp.AddRange([byte[]][System.Text.Encoding]::ASCII.GetBytes("KAPP"))
-foreach ($value in @(20, 0, $helloPayload.Length, 0)) {
-    $helloKapp.Add([byte]($value -band 0xFF))
-    $helloKapp.Add([byte](($value -shr 8) -band 0xFF))
-    $helloKapp.Add([byte](($value -shr 16) -band 0xFF))
-    $helloKapp.Add([byte](($value -shr 24) -band 0xFF))
-}
-$helloKapp.AddRange($helloPayload)
-$echoKapp = New-Object System.Collections.Generic.List[byte]
-$echoKapp.AddRange([byte[]][System.Text.Encoding]::ASCII.GetBytes("KAPP"))
-foreach ($value in @(20, 0, $echoPayload.Length, 0)) {
-    $echoKapp.Add([byte]($value -band 0xFF))
-    $echoKapp.Add([byte](($value -shr 8) -band 0xFF))
-    $echoKapp.Add([byte](($value -shr 16) -band 0xFF))
-    $echoKapp.Add([byte](($value -shr 24) -band 0xFF))
-}
-$echoKapp.AddRange($echoPayload)
-$loggerKapp = New-Object System.Collections.Generic.List[byte]
-$loggerKapp.AddRange([byte[]][System.Text.Encoding]::ASCII.GetBytes("KAPP"))
-foreach ($value in @(20, 0, $loggerPayload.Length, 0)) {
-    $loggerKapp.Add([byte]($value -band 0xFF))
-    $loggerKapp.Add([byte](($value -shr 8) -band 0xFF))
-    $loggerKapp.Add([byte](($value -shr 16) -band 0xFF))
-    $loggerKapp.Add([byte](($value -shr 24) -band 0xFF))
-}
-$loggerKapp.AddRange($loggerPayload)
+$helloKapp = New-Kapp "hello" $helloPayload ((1 -shl 2) -bor (1 -shl 7))
+$echoKapp = New-Kapp "echo" $echoPayload ((1 -shl 2) -bor (1 -shl 7) -bor (1 -shl 11))
+$loggerKapp = New-Kapp "logger" $loggerPayload ((1 -shl 2) -bor (1 -shl 7) -bor (1 -shl 10) -bor (1 -shl 11) -bor (1 -shl 14) -bor (1 -shl 15) -bor (1 -shl 16))
 Add-Record "apps/demo.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
 Add-Record "apps/clock.txt" ([System.Text.Encoding]::ASCII.GetBytes("clock is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
 Add-Record "apps/reader.txt" ([System.Text.Encoding]::ASCII.GetBytes("reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.`n"))
-Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app`nclock|built-in|Shows PID and ticks`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to tmp/app.log`n"))
-Add-Record "apps/hello.kapp" ([byte[]]$helloKapp.ToArray())
-Add-Record "apps/echo.kapp" ([byte[]]$echoKapp.ToArray())
-Add-Record "apps/logger.kapp" ([byte[]]$loggerKapp.ToArray())
+Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app`nclock|built-in|Shows PID and ticks`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to a log file`n"))
+Add-Record "apps/hello.kapp" $helloKapp
+Add-Record "apps/echo.kapp" $echoKapp
+Add-Record "apps/logger.kapp" $loggerKapp
 Add-Record "readme.txt" ([System.Text.Encoding]::ASCII.GetBytes("Kernel1 initrd v2: name + u32 size + binary-safe data records.`n"))
-Add-Record "docs/kapp.txt" ([System.Text.Encoding]::ASCII.GetBytes("KAPP v0: magic KAPP, u32 header size, u32 entry offset, u32 image size, u32 flags, payload.`n"))
+Add-Record "docs/kapp.txt" ([System.Text.Encoding]::ASCII.GetBytes("KAPP v1: magic KAPP, u32 header size, entry offset, image size, flags, version, required syscall mask, 32-byte app name, reserved, payload. KAPP v0 headers are still accepted.`n"))
 $initrdBytesList.Add(0)
 $initrd = [byte[]]$initrdBytesList.ToArray()
 if ($initrd.Length -gt $InitrdBytes) {

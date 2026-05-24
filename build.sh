@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-KERNEL_SECTORS=216
+KERNEL_SECTORS=232
 KERNEL_BYTES=$((KERNEL_SECTORS * 512))
 INITRD_SECTORS=16
 INITRD_BYTES=$((INITRD_SECTORS * 512))
@@ -108,31 +108,42 @@ append_record() {
     cat "$file" >> "$BUILD_DIR/initrd.bin"
 }
 
+write_kapp() {
+    local output="$1"
+    local payload="$2"
+    local app_name="$3"
+    local syscall_mask="$4"
+    local payload_size
+    local name_length
+
+    payload_size=$(wc -c < "$payload")
+    name_length=${#app_name}
+
+    printf 'KAPP' > "$output"
+    write_u32 64 >> "$output"
+    write_u32 0 >> "$output"
+    write_u32 "$payload_size" >> "$output"
+    write_u32 0 >> "$output"
+    write_u32 1 >> "$output"
+    write_u32 "$syscall_mask" >> "$output"
+    printf '%s' "$app_name" >> "$output"
+    if [[ "$name_length" -lt 32 ]]; then
+        dd if=/dev/zero bs=1 count=$((32 - name_length)) >> "$output" 2>/dev/null
+    fi
+    write_u32 0 >> "$output"
+    cat "$payload" >> "$output"
+}
+
 printf 'K1RD2\0' > "$BUILD_DIR/initrd.bin"
 printf 'demo is currently linked into the kernel image.\nNext: load this app from initrd.\n' > "$BUILD_DIR/demo.txt"
 printf 'clock is currently linked into the kernel image.\nNext: load this app from initrd.\n' > "$BUILD_DIR/clock.txt"
 printf 'reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.\n' > "$BUILD_DIR/reader.txt"
-printf 'demo|built-in|Demo ring3 app\nclock|built-in|Shows PID and ticks\nreader|built-in|Reads files through VFS syscalls\nhello|kapp|Hello from initrd\necho|kapp|Prints arguments\nlogger|kapp|Appends args to tmp/app.log\n' > "$BUILD_DIR/manifest.txt"
+printf 'demo|built-in|Demo ring3 app\nclock|built-in|Shows PID and ticks\nreader|built-in|Reads files through VFS syscalls\nhello|kapp|Hello from initrd\necho|kapp|Prints arguments\nlogger|kapp|Appends args to a log file\n' > "$BUILD_DIR/manifest.txt"
 printf 'Kernel1 initrd v2: name + u32 size + binary-safe data records.\n' > "$BUILD_DIR/readme.txt"
-printf 'KAPP v0: magic KAPP, u32 header size, u32 entry offset, u32 image size, u32 flags, payload.\n' > "$BUILD_DIR/kapp.txt"
-printf 'KAPP' > "$BUILD_DIR/hello.kapp"
-write_u32 20 >> "$BUILD_DIR/hello.kapp"
-write_u32 0 >> "$BUILD_DIR/hello.kapp"
-write_u32 "$(wc -c < "$BUILD_DIR/hello.payload")" >> "$BUILD_DIR/hello.kapp"
-write_u32 0 >> "$BUILD_DIR/hello.kapp"
-cat "$BUILD_DIR/hello.payload" >> "$BUILD_DIR/hello.kapp"
-printf 'KAPP' > "$BUILD_DIR/echo.kapp"
-write_u32 20 >> "$BUILD_DIR/echo.kapp"
-write_u32 0 >> "$BUILD_DIR/echo.kapp"
-write_u32 "$(wc -c < "$BUILD_DIR/echo.payload")" >> "$BUILD_DIR/echo.kapp"
-write_u32 0 >> "$BUILD_DIR/echo.kapp"
-cat "$BUILD_DIR/echo.payload" >> "$BUILD_DIR/echo.kapp"
-printf 'KAPP' > "$BUILD_DIR/logger.kapp"
-write_u32 20 >> "$BUILD_DIR/logger.kapp"
-write_u32 0 >> "$BUILD_DIR/logger.kapp"
-write_u32 "$(wc -c < "$BUILD_DIR/logger.payload")" >> "$BUILD_DIR/logger.kapp"
-write_u32 0 >> "$BUILD_DIR/logger.kapp"
-cat "$BUILD_DIR/logger.payload" >> "$BUILD_DIR/logger.kapp"
+printf 'KAPP v1: magic KAPP, u32 header size, entry offset, image size, flags, version, required syscall mask, 32-byte app name, reserved, payload. KAPP v0 headers are still accepted.\n' > "$BUILD_DIR/kapp.txt"
+write_kapp "$BUILD_DIR/hello.kapp" "$BUILD_DIR/hello.payload" "hello" $(((1 << 2) | (1 << 7)))
+write_kapp "$BUILD_DIR/echo.kapp" "$BUILD_DIR/echo.payload" "echo" $(((1 << 2) | (1 << 7) | (1 << 11)))
+write_kapp "$BUILD_DIR/logger.kapp" "$BUILD_DIR/logger.payload" "logger" $(((1 << 2) | (1 << 7) | (1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16)))
 
 append_record "apps/demo.txt" "$BUILD_DIR/demo.txt"
 append_record "apps/clock.txt" "$BUILD_DIR/clock.txt"

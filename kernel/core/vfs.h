@@ -27,6 +27,8 @@ int vfs_remove_recursive(const char* path);
 void vfs_list(void);
 void vfs_list_path(const char* path);
 void vfs_cat(const char* path);
+void vfs_du(const char* path);
+void vfs_find(const char* path, const char* pattern);
 void vfs_stat(const char* path);
 void vfs_tree(const char* path);
 

@@ -5,7 +5,7 @@
 
 #include <stddef.h>
 
-#define SHELL_FS_PATH_SIZE 64
+#define SHELL_FS_PATH_SIZE 80
 
 void shell_fs_initialize(void);
 const char* shell_fs_current_directory(void);

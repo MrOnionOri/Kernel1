@@ -9,9 +9,10 @@
 #define VFS_CAT_BUFFER_SIZE 64
 #define VFS_KFS_FILE_BUFFER_SIZE 4097
 #define RAMFS_MAX_NODES 16
-#define RAMFS_MAX_PATH 48
+#define RAMFS_MAX_PATH 80
 #define RAMFS_MAX_FILE_SIZE 4096
 #define VFS_MAX_SEEN_DIRS 8
+#define VFS_KFS_RECURSIVE_MAX 32
 
 struct vfs_handle {
     int used;
@@ -42,9 +43,11 @@ struct ramfs_node {
 static struct vfs_handle handles[VFS_MAX_OPEN_FILES];
 static struct ramfs_node ramfs_nodes[RAMFS_MAX_NODES];
 static char kfs_file_buffers[VFS_MAX_OPEN_FILES][VFS_KFS_FILE_BUFFER_SIZE];
+static char vfs_copy_buffer[RAMFS_MAX_FILE_SIZE + 1];
 
 static void string_copy(char* destination, const char* source, uint32_t size);
 static int ramfs_write_data(const char* path, const char* data, uint32_t size, const char* command_name);
+static int vfs_write_data(const char* path, const char* data, uint32_t size);
 static const char* kfs_file_name(const char* path);
 
 struct vfs_list_context {
@@ -52,6 +55,13 @@ struct vfs_list_context {
     int printed_any;
     char seen_dirs[VFS_MAX_SEEN_DIRS][RAMFS_MAX_PATH];
     uint32_t seen_dir_count;
+};
+
+struct vfs_kfs_remove_context {
+    const char* root;
+    char names[VFS_KFS_RECURSIVE_MAX][RAMFS_MAX_PATH];
+    int used[VFS_KFS_RECURSIVE_MAX];
+    uint32_t count;
 };
 
 static int string_equals(const char* left, const char* right) {
@@ -80,6 +90,26 @@ static int string_starts_with(const char* text, const char* prefix) {
     }
 
     return 1;
+}
+
+static int string_contains(const char* text, const char* pattern) {
+    if (pattern[0] == '\0') {
+        return 1;
+    }
+
+    for (uint32_t i = 0; text[i] != '\0'; i++) {
+        uint32_t j = 0;
+
+        while (pattern[j] != '\0' && text[i + j] == pattern[j]) {
+            j++;
+        }
+
+        if (pattern[j] == '\0') {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 static uint32_t string_length(const char* text) {
@@ -215,6 +245,71 @@ static int path_is_descendant(const char* parent, const char* child) {
     }
 
     return normalized_child[parent_length] == '/';
+}
+
+static void vfs_kfs_collect_remove_candidate(const char* name, uint32_t size,
+        uint32_t data_lba, int is_directory, void* raw_context) {
+    struct vfs_kfs_remove_context* context =
+        (struct vfs_kfs_remove_context*)raw_context;
+    (void)size;
+    (void)data_lba;
+    (void)is_directory;
+
+    if (!path_is_descendant(context->root, name)) {
+        return;
+    }
+
+    if (context->count >= VFS_KFS_RECURSIVE_MAX) {
+        return;
+    }
+
+    string_copy(context->names[context->count], name,
+        sizeof(context->names[context->count]));
+    context->used[context->count] = 1;
+    context->count++;
+}
+
+static int vfs_kfs_remove_recursive(const char* disk_name) {
+    struct vfs_kfs_remove_context context;
+
+    context.root = disk_name;
+    context.count = 0;
+    for (uint32_t i = 0; i < VFS_KFS_RECURSIVE_MAX; i++) {
+        context.used[i] = 0;
+        context.names[i][0] = '\0';
+    }
+
+    if (!kfs_for_each(vfs_kfs_collect_remove_candidate, &context)) {
+        return kfs_remove(disk_name);
+    }
+
+    for (;;) {
+        uint32_t selected = VFS_KFS_RECURSIVE_MAX;
+        uint32_t selected_length = 0;
+
+        for (uint32_t i = 0; i < context.count; i++) {
+            if (!context.used[i]) {
+                continue;
+            }
+
+            uint32_t length = string_length(context.names[i]);
+            if (selected == VFS_KFS_RECURSIVE_MAX || length > selected_length) {
+                selected = i;
+                selected_length = length;
+            }
+        }
+
+        if (selected == VFS_KFS_RECURSIVE_MAX) {
+            break;
+        }
+
+        if (!kfs_remove(context.names[selected])) {
+            return 0;
+        }
+        context.used[selected] = 0;
+    }
+
+    return kfs_remove(disk_name);
 }
 
 static int path_child_name(const char* parent, const char* child, char* output,
@@ -481,7 +576,81 @@ struct vfs_tree_context {
     uint32_t seen_dir_count;
 };
 
+struct vfs_du_context {
+    const char* path;
+    uint32_t logical_bytes;
+    uint32_t allocated_bytes;
+    uint32_t files;
+    uint32_t directories;
+    int exact_file_found;
+};
+
+struct vfs_find_context {
+    const char* path;
+    const char* pattern;
+    uint32_t matches;
+};
+
 static void vfs_tree_dir(const char* path, uint32_t depth);
+
+static int vfs_find_in_scope(const char* parent, const char* candidate) {
+    const char* normalized_parent = path_without_leading_slash(parent);
+    const char* normalized_candidate = path_without_leading_slash(candidate);
+
+    if (path_is_root(normalized_parent)) {
+        return normalized_candidate[0] != '\0';
+    }
+
+    return string_equals(normalized_parent, normalized_candidate) ||
+        path_is_descendant(normalized_parent, normalized_candidate);
+}
+
+static void vfs_find_print(struct vfs_find_context* context,
+        const char* path, int is_directory, const char* source) {
+    if (!vfs_find_in_scope(context->path, path)) {
+        return;
+    }
+
+    if (!string_contains(path, context->pattern) &&
+            !string_contains(path_basename(path), context->pattern)) {
+        return;
+    }
+
+    terminal_write("  /");
+    terminal_write(path_without_leading_slash(path));
+    terminal_write(is_directory ? "/  <" : "  <");
+    terminal_write(source);
+    terminal_write(">\n");
+    context->matches++;
+}
+
+static void vfs_find_visit_initrd(const struct initrd_file* file, void* raw_context) {
+    struct vfs_find_context* context = (struct vfs_find_context*)raw_context;
+
+    vfs_find_print(context, file->name, 0, "initrd");
+}
+
+static void vfs_find_visit_kfs(const char* name, uint32_t size,
+        uint32_t data_lba, int is_directory, void* raw_context) {
+    struct vfs_find_context* context = (struct vfs_find_context*)raw_context;
+    char path[RAMFS_MAX_PATH];
+    uint32_t index = 0;
+    const char* prefix = "disk/";
+    (void)size;
+    (void)data_lba;
+
+    while (prefix[index] != '\0' && index < sizeof(path) - 1) {
+        path[index] = prefix[index];
+        index++;
+    }
+
+    for (uint32_t source = 0; name[source] != '\0' && index < sizeof(path) - 1; source++) {
+        path[index++] = name[source];
+    }
+
+    path[index] = '\0';
+    vfs_find_print(context, path, is_directory, "disk");
+}
 
 static void vfs_check_initrd_dir(const struct initrd_file* file, void* raw_context) {
     struct vfs_dir_exists_context* context = (struct vfs_dir_exists_context*)raw_context;
@@ -546,6 +715,57 @@ static uint32_t vfs_count_children(const char* path) {
     }
 
     return context.count;
+}
+
+static void vfs_du_add_file(struct vfs_du_context* context, uint32_t logical,
+        uint32_t allocated) {
+    context->logical_bytes += logical;
+    context->allocated_bytes += allocated;
+    context->files++;
+}
+
+static void vfs_du_visit_initrd(const struct initrd_file* file, void* raw_context) {
+    struct vfs_du_context* context = (struct vfs_du_context*)raw_context;
+
+    if (string_equals(path_without_leading_slash(context->path), file->name)) {
+        vfs_du_add_file(context, file->size, file->size);
+        context->exact_file_found = 1;
+        return;
+    }
+
+    if (vfs_is_directory(context->path) &&
+            path_is_descendant(context->path, file->name)) {
+        vfs_du_add_file(context, file->size, file->size);
+    }
+}
+
+static void vfs_du_visit_kfs(const char* name, uint32_t size,
+        uint32_t data_lba, int is_directory, void* raw_context) {
+    struct vfs_du_context* context = (struct vfs_du_context*)raw_context;
+    const char* disk_name = kfs_file_name(context->path);
+    const char* target = disk_name != 0 ? disk_name : "";
+    (void)data_lba;
+
+    if (disk_name != 0 && string_equals(target, name)) {
+        if (is_directory) {
+            context->directories++;
+        } else {
+            vfs_du_add_file(context, size, kfs_allocated_bytes(size));
+            context->exact_file_found = 1;
+        }
+        return;
+    }
+
+    if ((path_is_root(context->path) ||
+            path_is_kfs_root(context->path) ||
+            (disk_name != 0 && kfs_is_directory(disk_name))) &&
+            (target[0] == '\0' || path_is_descendant(target, name))) {
+        if (is_directory) {
+            context->directories++;
+        } else {
+            vfs_du_add_file(context, size, kfs_allocated_bytes(size));
+        }
+    }
 }
 
 static void path_join(const char* parent, const char* child, char* output, uint32_t size) {
@@ -1067,13 +1287,17 @@ static int ramfs_write_data(const char* path, const char* data, uint32_t size, c
 }
 
 int vfs_write_text(const char* path, const char* text) {
+    return vfs_write_data(path, text, string_length(text));
+}
+
+static int vfs_write_data(const char* path, const char* data, uint32_t size) {
     const char* disk_name = kfs_file_name(path);
 
     if (disk_name != 0) {
-        return kfs_save_text(disk_name, text);
+        return kfs_save_data(disk_name, data, size);
     }
 
-    return ramfs_write_data(path, text, string_length(text), "write");
+    return ramfs_write_data(path, data, size, "write");
 }
 
 int vfs_append_text(const char* path, const char* text) {
@@ -1134,21 +1358,14 @@ int vfs_append_text(const char* path, const char* text) {
 }
 
 int vfs_copy(const char* source_path, const char* destination_path) {
-    char* buffer = (char*)kmalloc(RAMFS_MAX_FILE_SIZE + 1);
     int fd;
     uint32_t total = 0;
     struct initrd_file destination_file;
-
-    if (buffer == 0) {
-        terminal_write("cp: out of heap memory\n");
-        return 0;
-    }
 
     if (vfs_is_directory(source_path)) {
         terminal_write("cp: source is a directory: ");
         terminal_write(source_path);
         terminal_write("\n");
-        kfree(buffer);
         return 0;
     }
 
@@ -1157,7 +1374,6 @@ int vfs_copy(const char* source_path, const char* destination_path) {
         terminal_write("cp: destination is read-only: ");
         terminal_write(destination_path);
         terminal_write("\n");
-        kfree(buffer);
         return 0;
     }
 
@@ -1166,19 +1382,18 @@ int vfs_copy(const char* source_path, const char* destination_path) {
         terminal_write("cp: source not found: ");
         terminal_write(source_path);
         terminal_write("\n");
-        kfree(buffer);
         return 0;
     }
 
     for (;;) {
-        int32_t bytes = vfs_read(fd, buffer + total, (RAMFS_MAX_FILE_SIZE + 1) - total);
+        int32_t bytes = vfs_read(fd, vfs_copy_buffer + total,
+            (RAMFS_MAX_FILE_SIZE + 1) - total);
 
         if (bytes < 0) {
             terminal_write("cp: read failed: ");
             terminal_write(source_path);
             terminal_write("\n");
             vfs_close(fd);
-            kfree(buffer);
             return 0;
         }
 
@@ -1191,16 +1406,12 @@ int vfs_copy(const char* source_path, const char* destination_path) {
         if (total > RAMFS_MAX_FILE_SIZE) {
             terminal_write("cp: source too large for ramfs\n");
             vfs_close(fd);
-            kfree(buffer);
             return 0;
         }
     }
 
     vfs_close(fd);
-    buffer[total] = '\0';
-    int ok = vfs_write_text(destination_path, buffer);
-    kfree(buffer);
-    return ok;
+    return vfs_write_data(destination_path, vfs_copy_buffer, total);
 }
 
 int vfs_move(const char* source_path, const char* destination_path) {
@@ -1292,7 +1503,7 @@ int vfs_remove_recursive(const char* path) {
     }
 
     if (disk_name != 0) {
-        return kfs_remove(disk_name);
+        return vfs_kfs_remove_recursive(disk_name);
     }
 
     if (node == 0) {
@@ -1422,6 +1633,115 @@ void vfs_cat(const char* path) {
 
     vfs_close(fd);
     terminal_write("\n");
+}
+
+void vfs_du(const char* path) {
+    struct vfs_du_context context;
+    struct ramfs_node* node = ramfs_find(path);
+    const char* normalized = path_without_leading_slash(path);
+    const char* disk_name = kfs_file_name(path);
+
+    context.path = path;
+    context.logical_bytes = 0;
+    context.allocated_bytes = 0;
+    context.files = 0;
+    context.directories = 0;
+    context.exact_file_found = 0;
+
+    if (node != 0 && node->type == RAMFS_FILE) {
+        vfs_du_add_file(&context, node->size, node->capacity);
+        context.exact_file_found = 1;
+    } else if (node != 0 && node->type == RAMFS_DIRECTORY) {
+        context.directories++;
+    }
+
+    initrd_for_each(vfs_du_visit_initrd, &context);
+
+    if (path_is_root(path) || path_is_kfs_root(path) || disk_name != 0) {
+        kfs_for_each(vfs_du_visit_kfs, &context);
+    }
+
+    if (vfs_is_directory(path)) {
+        for (uint32_t i = 0; i < RAMFS_MAX_NODES; i++) {
+            if (!ramfs_nodes[i].used || !path_is_descendant(path, ramfs_nodes[i].path)) {
+                continue;
+            }
+
+            if (ramfs_nodes[i].type == RAMFS_DIRECTORY) {
+                context.directories++;
+            } else {
+                vfs_du_add_file(&context, ramfs_nodes[i].size, ramfs_nodes[i].capacity);
+            }
+        }
+    }
+
+    if (!vfs_is_directory(path) && !context.exact_file_found) {
+        terminal_write("du: not found: ");
+        terminal_write(path);
+        terminal_write("\n");
+        return;
+    }
+
+    terminal_write("Disk usage for /");
+    terminal_write(normalized);
+    terminal_write(":\n  Logical bytes: ");
+    terminal_write_dec(context.logical_bytes);
+    terminal_write("\n  Allocated bytes: ");
+    terminal_write_dec(context.allocated_bytes);
+    terminal_write("\n  Files: ");
+    terminal_write_dec(context.files);
+    terminal_write("\n  Directories: ");
+    terminal_write_dec(context.directories);
+    terminal_write("\n");
+}
+
+void vfs_find(const char* path, const char* pattern) {
+    struct vfs_find_context context;
+    int fd = VFS_INVALID_FD;
+
+    context.path = path;
+    context.pattern = pattern;
+    context.matches = 0;
+
+    if (!vfs_is_directory(path)) {
+        fd = vfs_open(path);
+    }
+
+    if (!vfs_is_directory(path) && fd == VFS_INVALID_FD) {
+        terminal_write("find: path not found: ");
+        terminal_write(path);
+        terminal_write("\n");
+        return;
+    }
+
+    if (fd != VFS_INVALID_FD) {
+        vfs_close(fd);
+    }
+
+    terminal_write("Find results under /");
+    terminal_write(path_without_leading_slash(path));
+    terminal_write(" for '");
+    terminal_write(pattern);
+    terminal_write("':\n");
+
+    initrd_for_each(vfs_find_visit_initrd, &context);
+
+    for (uint32_t i = 0; i < RAMFS_MAX_NODES; i++) {
+        if (!ramfs_nodes[i].used) {
+            continue;
+        }
+
+        vfs_find_print(&context, ramfs_nodes[i].path,
+            ramfs_nodes[i].type == RAMFS_DIRECTORY, "ram");
+    }
+
+    if (path_is_root(path) || path_is_kfs_root(path) || kfs_file_name(path) != 0) {
+        kfs_for_each(vfs_find_visit_kfs, &context);
+    }
+
+    if (context.matches == 0) {
+        terminal_write("  <no matches>\n");
+    }
 }
 
 void vfs_stat(const char* path) {

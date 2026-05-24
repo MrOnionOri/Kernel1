@@ -3,6 +3,7 @@
 #include "keyboard.h"
 #include "pic.h"
 #include "syscall.h"
+#include "task.h"
 #include "terminal.h"
 #include "timer.h"
 
@@ -152,6 +153,7 @@ static void irq_handler(struct interrupt_frame* frame) {
 
     if (irq == 0) {
         timer_tick();
+        scheduler_tick();
     } else if (irq == 1) {
         keyboard_handle_irq();
     }

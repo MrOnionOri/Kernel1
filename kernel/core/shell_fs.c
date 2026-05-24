@@ -284,6 +284,41 @@ int shell_fs_handle_line(const struct shell_line* line, int* last_status) {
         return 1;
     }
 
+    if (string_equals(line->args[0], "du")) {
+        char path[SHELL_FS_PATH_SIZE];
+        if (line->count > 1) {
+            shell_fs_resolve_path(line->args[1], path, sizeof(path));
+        } else {
+            string_copy(path, current_directory, sizeof(path));
+        }
+        vfs_du(path);
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "find")) {
+        char path[SHELL_FS_PATH_SIZE];
+        const char* pattern;
+
+        if (line->count < 2) {
+            terminal_write("find: usage find [path] <text>\n");
+            *last_status = 1;
+            return 1;
+        }
+
+        if (line->count == 2) {
+            string_copy(path, current_directory, sizeof(path));
+            pattern = line->args[1];
+        } else {
+            shell_fs_resolve_path(line->args[1], path, sizeof(path));
+            pattern = line->args[2];
+        }
+
+        vfs_find(path, pattern);
+        *last_status = 0;
+        return 1;
+    }
+
     if (string_equals(line->args[0], "tree")) {
         char path[SHELL_FS_PATH_SIZE];
         if (line->count > 1) {

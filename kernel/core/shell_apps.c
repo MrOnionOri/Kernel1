@@ -35,6 +35,35 @@ static int string_starts_with(const char* text, const char* prefix) {
     return 1;
 }
 
+static int string_contains_char(const char* text, char needle) {
+    for (size_t i = 0; text[i] != '\0'; i++) {
+        if (text[i] == needle) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int string_ends_with(const char* text, const char* suffix) {
+    size_t text_length = 0;
+    size_t suffix_length = 0;
+
+    while (text[text_length] != '\0') {
+        text_length++;
+    }
+
+    while (suffix[suffix_length] != '\0') {
+        suffix_length++;
+    }
+
+    if (suffix_length > text_length) {
+        return 0;
+    }
+
+    return string_equals(text + text_length - suffix_length, suffix);
+}
+
 static void string_copy(char* destination, const char* source, size_t size) {
     size_t index = 0;
 
@@ -100,6 +129,21 @@ static struct task* shell_spawn_app_text(const char* app_text) {
     }
 
     const char* args = skip_spaces(app_text + index);
+
+    if (string_contains_char(app_name, '/') || string_ends_with(app_name, ".kapp")) {
+        char path[SHELL_FS_PATH_SIZE];
+        shell_fs_resolve_path(app_name, path, sizeof(path));
+        struct task* task = kapp_spawn_path(path, args);
+        if (task != 0) {
+            return task;
+        }
+
+        terminal_write("KAPP path failed: ");
+        terminal_write(path);
+        terminal_write("\n");
+        return 0;
+    }
+
     const struct app_descriptor* app = app_find(app_name);
     enum app_kind kind = app_manifest_kind(app_name);
 
@@ -240,7 +284,16 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
 
     if (string_equals(line->args[0], "runall")) {
         terminal_ensure_rows(6);
-        if (task_has_ready()) {
+        if (line->count > 1 && string_equals(line->args[1], "-a")) {
+            uint32_t ran = task_run_all_ready_until_idle();
+            terminal_write("runall -a: ran ");
+            terminal_write_dec(ran);
+            terminal_write(" scheduler step");
+            if (ran != 1) {
+                terminal_write("s");
+            }
+            terminal_write("\n");
+        } else if (task_has_ready()) {
             task_run_all_ready();
         } else {
             terminal_write("No READY tasks\n");
@@ -276,13 +329,26 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
 
     if (string_equals(line->args[0], "wait")) {
         if (line->count < 2) {
-            terminal_write("wait: usage wait <id>\n");
+            terminal_write("wait: usage wait [-r] <id>\n");
             *last_status = 1;
         } else {
             int ok;
-            uint32_t id = string_to_uint(line->args[1], &ok);
+            int reap_after_wait = 0;
+            const char* id_text = line->args[1];
             uint32_t exit_code = 0;
 
+            if (string_equals(line->args[1], "-r")) {
+                if (line->count < 3) {
+                    terminal_write("wait: usage wait -r <id>\n");
+                    *last_status = 1;
+                    return 1;
+                }
+
+                reap_after_wait = 1;
+                id_text = line->args[2];
+            }
+
+            uint32_t id = string_to_uint(id_text, &ok);
             if (!ok || id == 0) {
                 terminal_write("wait: invalid id\n");
                 *last_status = 1;
@@ -292,6 +358,11 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
                 terminal_write(" exited with ");
                 terminal_write_dec(exit_code);
                 terminal_write("\n");
+                if (reap_after_wait && task_reap(id)) {
+                    terminal_write("Reaped task ");
+                    terminal_write_dec(id);
+                    terminal_write("\n");
+                }
                 *last_status = (int)exit_code;
             } else {
                 terminal_write("wait: task not found or not waitable: ");
@@ -304,6 +375,27 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
     }
 
     if (string_equals(line->args[0], "reap")) {
+        if (line->count > 1 && !string_equals(line->args[1], "-a")) {
+            int ok;
+            uint32_t id = string_to_uint(line->args[1], &ok);
+
+            if (!ok || id == 0) {
+                terminal_write("reap: usage reap [id|-a]\n");
+                *last_status = 1;
+            } else if (task_reap(id)) {
+                terminal_write("Reaped task ");
+                terminal_write_dec(id);
+                terminal_write("\n");
+                *last_status = 0;
+            } else {
+                terminal_write("reap: task not found or not exited: ");
+                terminal_write_dec(id);
+                terminal_write("\n");
+                *last_status = 1;
+            }
+            return 1;
+        }
+
         uint32_t count = task_reap_exited();
 
         terminal_write("Reaped ");
@@ -318,7 +410,9 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
     }
 
     if (string_equals(line->args[0], "ps")) {
-        if (line->count > 1 && string_equals(line->args[1], "-v")) {
+        if (line->count > 1 && string_equals(line->args[1], "-s")) {
+            task_print_summary();
+        } else if (line->count > 1 && string_equals(line->args[1], "-v")) {
             terminal_ensure_rows(14);
             task_print_all_verbose();
         } else {

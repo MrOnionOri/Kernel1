@@ -76,9 +76,10 @@ The shell is now split into focused modules:
 - `shell_script.c`: `source`, `exit`, `foreach`, `ifset`, `ifnotset`, `ifeq`,
   and `ifneq`.
 - `shell_fs.c`: filesystem commands and path state: `pwd`, `cd`, `ls`, `tree`,
-  `cat`, `stat`, `mkdir`, `write`, `append`, `cp`, `mv`, and `rm`.
+  `cat`, `stat`, `du`, `find`, `mkdir`, `write`, `append`, `cp`, `mv`, and `rm`.
 - `shell_apps.c`: app/process commands: `apps`, `appinfo`, `which`, `kapp`,
-  `spawn`, `run`, `runall`, `tasks`, and `tasksv`.
+  `spawn`, `run`, `runall`, `kill`, `wait`, `reap`, `ps`, `tasks`, and
+  `tasksv`.
 - `shell_system.c`: diagnostic/system commands: `ticks`, `mem`, `pmm`, `alloc`,
   `heap`, `kmalloc`, `paging`, `vmmtest`, `gdt`, `ring3`, and `about`.
 
@@ -154,16 +155,23 @@ append /disk/note " again"
 write /disk/docs/note hello
 cat /disk/note
 stat /disk/note
+du /disk
+find /disk note
+cp apps/hello.kapp /disk/hello.kapp
+run /disk/hello.kapp
 rm /disk/note
+rm -r /disk/docs
 ```
 
 This stage writes only to QEMU's secondary `build/data.img`, not to the boot
-image or host disks. KFS currently reserves sector 0 as the superblock, sectors
-1-4 as the directory area, sector 5 as the allocation bitmap, and starts file
-data at sector 6. Directory entries can represent either files or directories.
-File entries store the first data block; each data block stores a pointer to the
-next block followed by file bytes, so files can use non-contiguous sectors. The
-current maximum is 4096 bytes per file.
+image or host disks. KFS v3 currently reserves sector 0 as the superblock,
+sectors 1-4 as the directory area, sector 5 as the allocation bitmap, and
+starts file data at sector 6. Directory entries are 64 bytes and can represent
+either files or directories, giving the current directory area 32 entries and
+paths up to 51 characters inside `/disk`. File entries store the first data
+block; each data block stores a pointer to the next block followed by file
+bytes, so files can use non-contiguous sectors. The current maximum is 4096
+bytes per file.
 
 ## Apps And KAPP
 
@@ -176,7 +184,7 @@ The app registry is described by `apps/manifest.txt` in the initrd. Commands
 such as `apps`, `appinfo`, and `which` inspect this registry. Commands such as
 `spawn` and `run` start built-in or KAPP apps with arguments.
 
-Current KAPP v0 shape:
+Current KAPP v1 shape:
 
 ```text
 KAPP
@@ -184,8 +192,15 @@ u32 header_size
 u32 entry_offset
 u32 image_size
 u32 flags
+u32 version
+u32 required_syscalls_mask
+char name[32]
+u32 reserved
 payload bytes
 ```
+
+The loader still accepts the older KAPP v0 20-byte header for compatibility,
+but build scripts now emit v1 metadata for packaged apps.
 
 ## Tasks And User Mode
 
@@ -201,7 +216,11 @@ Tasks track:
 
 User-mode apps use `int 0x80` for syscalls. Foreground `run` executes a task
 until it exits. `spawn` creates a ready task that can later be driven by
-`runall`.
+`runall`; `runall -a` keeps stepping the cooperative scheduler until no ready
+tasks remain. `wait [-r] <id>` waits for one task and can reap it immediately,
+`reap [id|-a]` clears exited task slots, and `ps -s` prints a compact
+task-state summary. `sched [cooperative|auto]` exposes the scheduler mode; auto
+mode is currently an armed no-op with an IRQ0 hook, not full preemption yet.
 
 ## Syscall ABI
 
@@ -249,17 +268,14 @@ Working pieces:
   redirection, conditionals, loops, and scripts.
 - VFS over initrd, RAM files, and the `/disk` KFS mount.
 - Built-in user apps and KAPP apps.
-- Basic task table and foreground/background execution flow.
+- Basic task table and foreground/background execution flow with wait, kill,
+  reap, and task summaries.
 
 ## Next Work
 
 Recommended next steps:
 
-1. Make app behavior friendlier, for example letting `logger` create `tmp`
-   automatically or accept a configurable log path.
-2. Add larger directories and longer path/name support.
-3. Add richer task lifecycle controls and scheduler cleanup.
-4. Formalize KAPP metadata: version, permissions, required syscalls, and app
-   name in the binary format.
-5. After disk/process basics are stable, begin graphics groundwork: framebuffer,
+1. Add dynamically growing directories and longer file support.
+2. Implement safe preemptive context switching from the IRQ0 scheduler hook.
+3. After disk/process basics are stable, begin graphics groundwork: framebuffer,
    mouse/events, and a small UI server.

@@ -6,15 +6,18 @@
 #include <stdint.h>
 
 #define KFS_MAGIC 0x3153464B
-#define KFS_VERSION 2
+#define KFS_VERSION 3
 #define KFS_SECTOR_SIZE 512
 #define KFS_SUPERBLOCK_LBA 0
 #define KFS_DIR_START_LBA 1
 #define KFS_DIR_SECTORS 4
 #define KFS_BITMAP_LBA (KFS_DIR_START_LBA + KFS_DIR_SECTORS)
 #define KFS_BITMAP_MAX_SECTORS (KFS_SECTOR_SIZE * 8)
-#define KFS_ENTRY_SIZE 32
-#define KFS_ENTRY_NAME_SIZE 20
+#define KFS_ENTRY_SIZE 64
+#define KFS_ENTRY_NAME_OFFSET 4
+#define KFS_ENTRY_NAME_SIZE 52
+#define KFS_ENTRY_DATA_LBA_OFFSET 56
+#define KFS_ENTRY_SIZE_OFFSET 60
 #define KFS_ENTRY_FLAG_FILE 1
 #define KFS_ENTRY_FLAG_DIRECTORY 2
 #define KFS_MAX_FILE_BYTES 4096
@@ -310,7 +313,7 @@ static int write_text_chain(const uint32_t* blocks, uint32_t block_count,
 
 static void entry_read_name(const uint8_t* sector, uint32_t offset, char* name) {
     for (uint32_t i = 0; i < KFS_ENTRY_NAME_SIZE; i++) {
-        name[i] = (char)sector[offset + 4 + i];
+        name[i] = (char)sector[offset + KFS_ENTRY_NAME_OFFSET + i];
     }
 
     name[KFS_ENTRY_NAME_SIZE - 1] = '\0';
@@ -318,11 +321,11 @@ static void entry_read_name(const uint8_t* sector, uint32_t offset, char* name) 
 
 static void entry_write_name(uint8_t* sector, uint32_t offset, const char* name) {
     for (uint32_t i = 0; i < KFS_ENTRY_NAME_SIZE; i++) {
-        sector[offset + 4 + i] = 0;
+        sector[offset + KFS_ENTRY_NAME_OFFSET + i] = 0;
     }
 
     for (uint32_t i = 0; name[i] != '\0' && i < KFS_ENTRY_NAME_SIZE - 1; i++) {
-        sector[offset + 4 + i] = (uint8_t)name[i];
+        sector[offset + KFS_ENTRY_NAME_OFFSET + i] = (uint8_t)name[i];
     }
 }
 
@@ -497,8 +500,8 @@ int kfs_check(int verbose) {
             continue;
         }
 
-        uint32_t data_lba = read_u32(dir_sector, offset + 24);
-        uint32_t size = read_u32(dir_sector, offset + 28);
+        uint32_t data_lba = read_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET);
+        uint32_t size = read_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET);
 
         if (flag == KFS_ENTRY_FLAG_DIRECTORY) {
             dir_count++;
@@ -724,11 +727,11 @@ int kfs_list(void) {
         if (sector[offset] == KFS_ENTRY_FLAG_DIRECTORY) {
             terminal_write("<dir>");
         } else {
-            terminal_write_dec(read_u32(sector, offset + 28));
+            terminal_write_dec(read_u32(sector, offset + KFS_ENTRY_SIZE_OFFSET));
             terminal_write(" bytes  sector ");
-            terminal_write_dec(read_u32(sector, offset + 24));
+            terminal_write_dec(read_u32(sector, offset + KFS_ENTRY_DATA_LBA_OFFSET));
             terminal_write("  sectors ");
-            terminal_write_dec(sectors_for_size(read_u32(sector, offset + 28)));
+            terminal_write_dec(sectors_for_size(read_u32(sector, offset + KFS_ENTRY_SIZE_OFFSET)));
         }
         terminal_write("\n");
         used++;
@@ -772,8 +775,8 @@ int kfs_for_each(kfs_visit_callback callback, void* context) {
 
         char name[KFS_ENTRY_NAME_SIZE];
         entry_read_name(sector, offset, name);
-        callback(name, read_u32(sector, offset + 28),
-            read_u32(sector, offset + 24),
+        callback(name, read_u32(sector, offset + KFS_ENTRY_SIZE_OFFSET),
+            read_u32(sector, offset + KFS_ENTRY_DATA_LBA_OFFSET),
             sector[offset] == KFS_ENTRY_FLAG_DIRECTORY, context);
     }
 
@@ -899,8 +902,8 @@ int kfs_mkdir(const char* name) {
     }
 
     dir_sector[offset] = KFS_ENTRY_FLAG_DIRECTORY;
-    write_u32(dir_sector, offset + 24, 0);
-    write_u32(dir_sector, offset + 28, 0);
+    write_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET, 0);
+    write_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET, 0);
     entry_write_name(dir_sector, offset, name);
 
     if (!ata_write_data_sector(dir_lba, dir_sector)) {
@@ -911,7 +914,7 @@ int kfs_mkdir(const char* name) {
     return 1;
 }
 
-int kfs_save_text(const char* name, const char* text) {
+int kfs_save_data(const char* name, const char* data, uint32_t size) {
     struct kfs_superblock superblock;
     uint8_t dir_sector[KFS_SECTOR_SIZE];
     uint32_t slot = 0;
@@ -957,14 +960,13 @@ int kfs_save_text(const char* name, const char* text) {
         return 0;
     }
 
-    uint32_t size = string_length(text);
     if (size > KFS_MAX_FILE_BYTES) {
         size = KFS_MAX_FILE_BYTES;
     }
 
     uint32_t needed_sectors = sectors_for_size(size);
-    uint32_t old_data_lba = found ? read_u32(dir_sector, offset + 24) : 0;
-    uint32_t old_size = found ? read_u32(dir_sector, offset + 28) : 0;
+    uint32_t old_data_lba = found ? read_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET) : 0;
+    uint32_t old_size = found ? read_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET) : 0;
     uint32_t old_sectors = found ? sectors_for_size(old_size) : 0;
     uint32_t blocks[KFS_MAX_FILE_SECTORS];
 
@@ -973,15 +975,15 @@ int kfs_save_text(const char* name, const char* text) {
         return 0;
     }
 
-    if (!write_text_chain(blocks, needed_sectors, text, size)) {
+    if (!write_text_chain(blocks, needed_sectors, data, size)) {
         terminal_write("kfssave: failed to write data\n");
         clear_allocated_blocks(blocks, needed_sectors);
         return 0;
     }
 
     dir_sector[offset] = KFS_ENTRY_FLAG_FILE;
-    write_u32(dir_sector, offset + 24, blocks[0]);
-    write_u32(dir_sector, offset + 28, size);
+    write_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET, blocks[0]);
+    write_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET, size);
     entry_write_name(dir_sector, offset, name);
 
     if (!ata_write_data_sector(dir_lba, dir_sector)) {
@@ -1041,8 +1043,8 @@ int kfs_read_text(const char* name, char* output, uint32_t output_size,
         return 0;
     }
 
-    uint32_t data_lba = read_u32(dir_sector, offset + 24);
-    uint32_t size = read_u32(dir_sector, offset + 28);
+    uint32_t data_lba = read_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET);
+    uint32_t size = read_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET);
     if (size > KFS_MAX_FILE_BYTES) {
         size = KFS_MAX_FILE_BYTES;
     }
@@ -1106,6 +1108,14 @@ int kfs_append_text(const char* name, const char* text) {
     return kfs_save_text(name, append_buffer);
 }
 
+uint32_t kfs_allocated_bytes(uint32_t size) {
+    if (size > KFS_MAX_FILE_BYTES) {
+        size = KFS_MAX_FILE_BYTES;
+    }
+
+    return sectors_for_size(size) * KFS_SECTOR_SIZE;
+}
+
 int kfs_cat(const char* name) {
     uint32_t size = 0;
 
@@ -1159,8 +1169,8 @@ int kfs_stat(const char* name) {
         terminal_write("\nType: directory\n");
     } else {
         terminal_write("\nData sector: ");
-        uint32_t data_lba = read_u32(dir_sector, offset + 24);
-        uint32_t size = read_u32(dir_sector, offset + 28);
+        uint32_t data_lba = read_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET);
+        uint32_t size = read_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET);
         terminal_write_dec(data_lba);
         terminal_write("\nSize: ");
         terminal_write_dec(size);
@@ -1235,8 +1245,8 @@ int kfs_remove(const char* name) {
             }
         }
     } else {
-        uint32_t data_lba = read_u32(dir_sector, offset + 24);
-        uint32_t size = read_u32(dir_sector, offset + 28);
+        uint32_t data_lba = read_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET);
+        uint32_t size = read_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET);
         if (!clear_data_chain(data_lba, sectors_for_size(size), &superblock)) {
             terminal_write("kfsrm: failed to clear data\n");
             return 0;
@@ -1256,6 +1266,10 @@ int kfs_remove(const char* name) {
     terminal_write(name);
     terminal_write("\n");
     return 1;
+}
+
+int kfs_save_text(const char* name, const char* text) {
+    return kfs_save_data(name, text, string_length(text));
 }
 
 int kfs_print_info(void) {

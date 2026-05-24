@@ -13,6 +13,7 @@ static struct task tasks[MAX_TASKS];
 static struct task* current_task;
 static uint32_t next_task_id;
 static uint32_t scheduler_cursor;
+static enum scheduler_mode current_scheduler_mode;
 static struct kernel_context scheduler_context;
 
 static const char* task_state_name(enum task_state state) {
@@ -25,6 +26,17 @@ static const char* task_state_name(enum task_state state) {
             return "running";
         case TASK_EXITED:
             return "exited";
+        default:
+            return "unknown";
+    }
+}
+
+const char* scheduler_mode_name(enum scheduler_mode mode) {
+    switch (mode) {
+        case SCHEDULER_COOPERATIVE:
+            return "cooperative";
+        case SCHEDULER_AUTO:
+            return "auto";
         default:
             return "unknown";
     }
@@ -95,11 +107,43 @@ void task_initialize(void) {
     next_task_id = 1;
     current_task = 0;
     scheduler_cursor = 0;
+    current_scheduler_mode = SCHEDULER_COOPERATIVE;
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         tasks[i].kernel_stack_top = 0;
         task_clear_slot(&tasks[i]);
     }
+}
+
+enum scheduler_mode scheduler_get_mode(void) {
+    return current_scheduler_mode;
+}
+
+void scheduler_set_mode(enum scheduler_mode mode) {
+    current_scheduler_mode = mode;
+}
+
+void scheduler_print_status(void) {
+    terminal_write("Scheduler:\n  mode=");
+    terminal_write(scheduler_mode_name(current_scheduler_mode));
+    terminal_write("\n  ready=");
+    terminal_write(task_has_ready() ? "yes" : "no");
+    terminal_write("\n  auto preemption=");
+    terminal_write(current_scheduler_mode == SCHEDULER_AUTO ? "armed (timer hook pending)" : "off");
+    terminal_write("\n  cursor=");
+    terminal_write_dec(scheduler_cursor);
+    terminal_write("\n");
+}
+
+void scheduler_tick(void) {
+    if (current_scheduler_mode != SCHEDULER_AUTO) {
+        return;
+    }
+
+    /*
+     * Preemptive switching will live here once IRQ return can save and restore
+     * user contexts safely. For now, auto mode is an armed no-op.
+     */
 }
 
 uint32_t task_next_id(void) {
@@ -271,6 +315,17 @@ void task_run_all_ready(void) {
     terminal_write("No READY tasks\n");
 }
 
+uint32_t task_run_all_ready_until_idle(void) {
+    uint32_t ran = 0;
+
+    while (task_has_ready()) {
+        task_run_all_ready();
+        ran++;
+    }
+
+    return ran;
+}
+
 int task_kill(uint32_t id, uint32_t exit_code) {
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (tasks[i].state == TASK_UNUSED || tasks[i].id != id) {
@@ -312,6 +367,23 @@ int task_wait(uint32_t id, uint32_t* exit_code) {
         }
 
         return 0;
+    }
+
+    return 0;
+}
+
+int task_reap(uint32_t id) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state == TASK_UNUSED || tasks[i].id != id) {
+            continue;
+        }
+
+        if (tasks[i].state != TASK_EXITED) {
+            return 0;
+        }
+
+        task_clear_slot(&tasks[i]);
+        return 1;
     }
 
     return 0;
@@ -418,4 +490,44 @@ void task_print_all_verbose(void) {
         }
         terminal_write("\n");
     }
+}
+
+void task_print_summary(void) {
+    uint32_t unused = 0;
+    uint32_t ready = 0;
+    uint32_t running = 0;
+    uint32_t exited = 0;
+
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        switch (tasks[i].state) {
+            case TASK_UNUSED:
+                unused++;
+                break;
+            case TASK_READY:
+                ready++;
+                break;
+            case TASK_RUNNING:
+                running++;
+                break;
+            case TASK_EXITED:
+                exited++;
+                break;
+            default:
+                break;
+        }
+    }
+
+    terminal_write("Task summary:\n  ready=");
+    terminal_write_dec(ready);
+    terminal_write(" running=");
+    terminal_write_dec(running);
+    terminal_write(" exited=");
+    terminal_write_dec(exited);
+    terminal_write(" unused=");
+    terminal_write_dec(unused);
+    terminal_write("\n  next id=");
+    terminal_write_dec(next_task_id);
+    terminal_write(" scheduler cursor=");
+    terminal_write_dec(scheduler_cursor);
+    terminal_write("\n");
 }

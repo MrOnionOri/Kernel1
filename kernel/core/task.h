@@ -16,6 +16,11 @@ enum task_state {
     TASK_EXITED,
 };
 
+enum scheduler_mode {
+    SCHEDULER_COOPERATIVE = 0,
+    SCHEDULER_AUTO,
+};
+
 struct task {
     uint32_t id;
     char name[TASK_NAME_SIZE];
@@ -30,6 +35,11 @@ struct task {
 };
 
 void task_initialize(void);
+enum scheduler_mode scheduler_get_mode(void);
+const char* scheduler_mode_name(enum scheduler_mode mode);
+void scheduler_set_mode(enum scheduler_mode mode);
+void scheduler_print_status(void);
+void scheduler_tick(void);
 uint32_t task_next_id(void);
 uint32_t task_current_id(void);
 uint32_t task_copy_current_args(char* buffer, uint32_t size);
@@ -41,9 +51,11 @@ struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t u
 struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32_t user_stack_top, const char* args);
 void task_run(struct task* task);
 void task_run_all_ready(void);
+uint32_t task_run_all_ready_until_idle(void);
 int task_has_ready(void);
 int task_kill(uint32_t id, uint32_t exit_code);
 int task_wait(uint32_t id, uint32_t* exit_code);
+int task_reap(uint32_t id);
 uint32_t task_reap_exited(void);
 void task_exit_current(uint32_t exit_code);
 void task_yield_current(struct interrupt_frame* frame);
@@ -51,5 +63,6 @@ void task_prepare_exit_return(struct interrupt_frame* frame, uint32_t exit_code)
 void task_prepare_yield_return(struct interrupt_frame* frame);
 void task_print_all(void);
 void task_print_all_verbose(void);
+void task_print_summary(void);
 
 #endif
