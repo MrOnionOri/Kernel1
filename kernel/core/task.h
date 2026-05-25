@@ -21,6 +21,22 @@ enum scheduler_mode {
     SCHEDULER_AUTO,
 };
 
+struct task_context {
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+    uint32_t esi;
+    uint32_t edi;
+    uint32_t ebp;
+    uint32_t esp;
+    uint32_t eip;
+    uint32_t eflags;
+    uint32_t cs;
+    uint32_t ss;
+    uint32_t valid;
+};
+
 struct task {
     uint32_t id;
     char name[TASK_NAME_SIZE];
@@ -30,6 +46,8 @@ struct task {
     uint32_t kernel_stack_top;
     uint32_t exit_code;
     uint32_t yields;
+    uint32_t preemptions;
+    struct task_context context;
     char args[TASK_ARGS_SIZE];
     int file_fds[TASK_MAX_FILES];
 };
@@ -38,8 +56,12 @@ void task_initialize(void);
 enum scheduler_mode scheduler_get_mode(void);
 const char* scheduler_mode_name(enum scheduler_mode mode);
 void scheduler_set_mode(enum scheduler_mode mode);
+void scheduler_reset_stats(void);
+uint32_t scheduler_preemption_count(void);
 void scheduler_print_status(void);
 void scheduler_tick(void);
+int scheduler_preempt_if_needed(struct interrupt_frame* frame);
+uint32_t scheduler_service_pending(void);
 uint32_t task_next_id(void);
 uint32_t task_current_id(void);
 uint32_t task_copy_current_args(char* buffer, uint32_t size);
@@ -63,6 +85,7 @@ void task_prepare_exit_return(struct interrupt_frame* frame, uint32_t exit_code)
 void task_prepare_yield_return(struct interrupt_frame* frame);
 void task_print_all(void);
 void task_print_all_verbose(void);
+int task_print_context(uint32_t id);
 void task_print_summary(void);
 
 #endif

@@ -302,6 +302,110 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
         return 1;
     }
 
+    if (string_equals(line->args[0], "schedtest")) {
+        enum scheduler_mode previous_mode = scheduler_get_mode();
+        int reap_after_test = 0;
+        uint32_t rounds = 1;
+        uint32_t total_steps = 0;
+        uint32_t preemptions_before;
+        uint32_t preemptions_after;
+        uint32_t failed = 0;
+
+        for (uint32_t i = 1; i < line->count; i++) {
+            if (string_equals(line->args[i], "-r")) {
+                reap_after_test = 1;
+            } else if (string_equals(line->args[i], "-n")) {
+                int ok;
+
+                if (i + 1 >= line->count) {
+                    terminal_write("schedtest: usage schedtest [-r] [-n rounds]\n");
+                    *last_status = 1;
+                    return 1;
+                }
+
+                rounds = string_to_uint(line->args[i + 1], &ok);
+                if (!ok || rounds == 0 || rounds > 9) {
+                    terminal_write("schedtest: rounds must be 1..9\n");
+                    *last_status = 1;
+                    return 1;
+                }
+                i++;
+            } else {
+                terminal_write("schedtest: usage schedtest [-r] [-n rounds]\n");
+                *last_status = 1;
+                return 1;
+            }
+        }
+
+        terminal_ensure_rows(14);
+        terminal_write("schedtest: busy + two demo tasks, rounds=");
+        terminal_write_dec(rounds);
+        terminal_write("\n");
+        preemptions_before = scheduler_preemption_count();
+
+        for (uint32_t round = 0; round < rounds; round++) {
+            uint32_t ran;
+
+            if (reap_after_test) {
+                task_reap_exited();
+            }
+
+            terminal_write("schedtest: round ");
+            terminal_write_dec(round + 1);
+            terminal_write("\n");
+            scheduler_set_mode(SCHEDULER_COOPERATIVE);
+
+            if (shell_spawn_app_text("busy") == 0 ||
+                    shell_spawn_app_text("demo") == 0 ||
+                    shell_spawn_app_text("demo") == 0) {
+                terminal_write("schedtest: spawn failed\n");
+                failed = 1;
+                break;
+            }
+
+            scheduler_set_mode(SCHEDULER_AUTO);
+            ran = task_run_all_ready_until_idle();
+            total_steps += ran;
+            terminal_write("schedtest: round steps ");
+            terminal_write_dec(ran);
+            terminal_write("\n");
+
+            if (task_has_ready()) {
+                terminal_write("schedtest: ready tasks remain\n");
+                failed = 1;
+                break;
+            }
+        }
+
+        preemptions_after = scheduler_preemption_count();
+        terminal_write("schedtest: total steps ");
+        terminal_write_dec(total_steps);
+        terminal_write("\n");
+        task_print_summary();
+        scheduler_print_status();
+        if (reap_after_test) {
+            uint32_t reaped = task_reap_exited();
+            terminal_write("schedtest: reaped ");
+            terminal_write_dec(reaped);
+            terminal_write(" exited task");
+            if (reaped != 1) {
+                terminal_write("s");
+            }
+            terminal_write("\n");
+        }
+        if (!failed && !task_has_ready() && preemptions_after > preemptions_before) {
+            terminal_write("schedtest: PASS\n");
+        } else {
+            terminal_write("schedtest: FAIL\n");
+            if (preemptions_after == preemptions_before) {
+                terminal_write("schedtest: no IRQ0 preemptions observed\n");
+            }
+        }
+        scheduler_set_mode(previous_mode);
+        *last_status = (failed || task_has_ready() || preemptions_after == preemptions_before) ? 1 : 0;
+        return 1;
+    }
+
     if (string_equals(line->args[0], "kill")) {
         if (line->count < 2) {
             terminal_write("kill: usage kill <id>\n");
@@ -420,6 +524,29 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
             task_print_all();
         }
         *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "ctx")) {
+        if (line->count < 2) {
+            terminal_write("ctx: usage ctx <task-id>\n");
+            *last_status = 1;
+        } else {
+            int ok;
+            uint32_t id = string_to_uint(line->args[1], &ok);
+
+            if (!ok || id == 0) {
+                terminal_write("ctx: invalid id\n");
+                *last_status = 1;
+            } else if (task_print_context(id)) {
+                *last_status = 0;
+            } else {
+                terminal_write("ctx: task not found: ");
+                terminal_write_dec(id);
+                terminal_write("\n");
+                *last_status = 1;
+            }
+        }
         return 1;
     }
 

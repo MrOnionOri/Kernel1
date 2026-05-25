@@ -10,11 +10,13 @@
 #define APP_MANIFEST_PATH "apps/manifest.txt"
 
 extern void user_test(void);
+extern void busy_app(void);
 extern void clock_app(void);
 extern void reader_app(void);
 
 static const struct app_descriptor apps[] = {
     { "demo", (uint32_t)user_test },
+    { "busy", (uint32_t)busy_app },
     { "clock", (uint32_t)clock_app },
     { "reader", (uint32_t)reader_app },
 };

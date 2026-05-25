@@ -13,5 +13,6 @@ void gdt_initialize(void);
 void gdt_set_kernel_stack(uint32_t stack);
 void gdt_print_status(void);
 void user_mode_switch(uint32_t entry, uint32_t user_stack);
+void user_context_switch(const void* context);
 
 #endif

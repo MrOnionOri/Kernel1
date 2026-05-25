@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 232
+$KernelSectors = 234
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
@@ -123,9 +123,10 @@ $helloKapp = New-Kapp "hello" $helloPayload ((1 -shl 2) -bor (1 -shl 7))
 $echoKapp = New-Kapp "echo" $echoPayload ((1 -shl 2) -bor (1 -shl 7) -bor (1 -shl 11))
 $loggerKapp = New-Kapp "logger" $loggerPayload ((1 -shl 2) -bor (1 -shl 7) -bor (1 -shl 10) -bor (1 -shl 11) -bor (1 -shl 14) -bor (1 -shl 15) -bor (1 -shl 16))
 Add-Record "apps/demo.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
+Add-Record "apps/busy.txt" ([System.Text.Encoding]::ASCII.GetBytes("busy is a built-in no-yield scheduler stress app.`n"))
 Add-Record "apps/clock.txt" ([System.Text.Encoding]::ASCII.GetBytes("clock is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
 Add-Record "apps/reader.txt" ([System.Text.Encoding]::ASCII.GetBytes("reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.`n"))
-Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app`nclock|built-in|Shows PID and ticks`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to a log file`n"))
+Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app with SYS_YIELD`nbusy|built-in|No-yield scheduler stress app`nclock|built-in|Shows PID and ticks`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to a log file`n"))
 Add-Record "apps/hello.kapp" $helloKapp
 Add-Record "apps/echo.kapp" $echoKapp
 Add-Record "apps/logger.kapp" $loggerKapp

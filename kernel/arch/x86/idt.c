@@ -154,6 +154,7 @@ static void irq_handler(struct interrupt_frame* frame) {
     if (irq == 0) {
         timer_tick();
         scheduler_tick();
+        scheduler_preempt_if_needed(frame);
     } else if (irq == 1) {
         keyboard_handle_irq();
     }

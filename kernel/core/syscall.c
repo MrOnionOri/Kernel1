@@ -102,10 +102,7 @@ static void syscall_write_dec(uint32_t value) {
 }
 
 static void syscall_yield(struct interrupt_frame* frame) {
-    (void)frame;
-    terminal_set_color(VGA_COLOR_LIGHT_BROWN, VGA_COLOR_BLACK);
-    terminal_write("SYS_YIELD: cooperative context switch parked for stabilization\n");
-    terminal_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    task_prepare_yield_return(frame);
 }
 
 static int32_t syscall_open(const char* path) {

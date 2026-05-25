@@ -79,7 +79,7 @@ The shell is now split into focused modules:
   `cat`, `stat`, `du`, `find`, `mkdir`, `write`, `append`, `cp`, `mv`, and `rm`.
 - `shell_apps.c`: app/process commands: `apps`, `appinfo`, `which`, `kapp`,
   `spawn`, `run`, `runall`, `kill`, `wait`, `reap`, `ps`, `tasks`, and
-  `tasksv`.
+  `tasksv`, plus `schedtest` for a built-in busy/demo preemption smoke test.
 - `shell_system.c`: diagnostic/system commands: `ticks`, `mem`, `pmm`, `alloc`,
   `heap`, `kmalloc`, `paging`, `vmmtest`, `gdt`, `ring3`, and `about`.
 
@@ -109,6 +109,7 @@ Initrd files are loaded into the VFS under paths such as:
 
 ```text
 apps/manifest.txt
+apps/busy.txt
 apps/hello.kapp
 apps/echo.kapp
 apps/logger.kapp
@@ -210,17 +211,31 @@ Tasks track:
 - state: unused, ready, running, exited;
 - entry address;
 - user stack and kernel stack;
-- exit code and yield count;
+- exit code, yield count, and preemption count;
 - command-line args;
 - per-task file descriptors.
+- saved user context snapshot: general registers, `eip`, `esp`, `eflags`,
+  `cs`, and `ss` for scheduler/debug groundwork.
 
 User-mode apps use `int 0x80` for syscalls. Foreground `run` executes a task
 until it exits. `spawn` creates a ready task that can later be driven by
 `runall`; `runall -a` keeps stepping the cooperative scheduler until no ready
 tasks remain. `wait [-r] <id>` waits for one task and can reap it immediately,
 `reap [id|-a]` clears exited task slots, and `ps -s` prints a compact
-task-state summary. `sched [cooperative|auto]` exposes the scheduler mode; auto
-mode is currently an armed no-op with an IRQ0 hook, not full preemption yet.
+task-state summary. `sched [cooperative|auto|reset]` exposes the scheduler mode; auto
+mode preempts on IRQ0 when the interrupt came from ring 3 and another task is
+ready. Kernel-mode timer interrupts still avoid task switching.
+`tasks`, `tasksv`, `ctx`, and `sched` expose preemption counters so IRQ0
+switching can be verified without guessing from interleaved output alone.
+`schedtest` spawns a no-yield `busy` task and two yielding `demo` tasks, enables
+auto scheduling, runs until idle, and prints the scheduler summary. Use
+`schedtest -r` to reap exited tasks after the test, and `schedtest -r -n N` to
+repeat the smoke test for multiple rounds. It prints `PASS` only if all tasks
+finish and at least one IRQ0 preemption was observed.
+`ps -v` prints the saved context snapshot for each non-unused task, while
+`ctx <id>` prints one task context in a more focused form. The x86 arch layer
+can now enter ring 3 from a saved task context, which is the manual/cooperative
+restore step needed before safe timer-driven preemption.
 
 ## Syscall ABI
 
@@ -237,7 +252,7 @@ Current syscalls:
 ```text
 1  SYS_WRITE      ebx=string_c                  legacy/debug
 2  SYS_EXIT       ebx=exit_code                 does not return to user
-3  SYS_YIELD      reserved/limited              cooperative path is cautious
+3  SYS_YIELD      save context and return to scheduler
 4  SYS_WRITE_DEC  ebx=value                     decimal debug output
 5  SYS_GETPID                                    returns pid in eax
 6  SYS_TICKS                                     returns PIT ticks in eax
@@ -267,15 +282,16 @@ Working pieces:
 - Shell with history, cursor editing, TAB completion, variables, aliases,
   redirection, conditionals, loops, and scripts.
 - VFS over initrd, RAM files, and the `/disk` KFS mount.
-- Built-in user apps and KAPP apps.
+- Built-in user apps, including `demo` with `SYS_YIELD` and `busy` without
+  yield, plus KAPP apps.
 - Basic task table and foreground/background execution flow with wait, kill,
-  reap, and task summaries.
+  reap, task summaries, and saved context snapshots.
 
 ## Next Work
 
 Recommended next steps:
 
 1. Add dynamically growing directories and longer file support.
-2. Implement safe preemptive context switching from the IRQ0 scheduler hook.
+2. Harden IRQ0 preemption with longer stress tests and cleaner accounting.
 3. After disk/process basics are stable, begin graphics groundwork: framebuffer,
    mouse/events, and a small UI server.

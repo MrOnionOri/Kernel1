@@ -61,10 +61,14 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
             *last_status = 0;
         } else if (line->count == 2 && string_equals(line->args[1], "auto")) {
             scheduler_set_mode(SCHEDULER_AUTO);
-            terminal_write("Scheduler mode: auto (timer hook pending)\n");
+            terminal_write("Scheduler mode: auto (irq0 user-mode preemption)\n");
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals(line->args[1], "reset")) {
+            scheduler_reset_stats();
+            terminal_write("Scheduler stats reset\n");
             *last_status = 0;
         } else {
-            terminal_write("sched: usage sched [cooperative|auto]\n");
+            terminal_write("sched: usage sched [cooperative|auto|reset]\n");
             *last_status = 1;
         }
         return 1;

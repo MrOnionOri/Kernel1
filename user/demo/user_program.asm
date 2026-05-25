@@ -3,6 +3,7 @@
 [global user_test]
 [extern user_write]
 [extern user_write_dec]
+[extern user_yield]
 [extern user_getpid]
 [extern user_ticks]
 [extern user_exit]
@@ -12,6 +13,7 @@ user_test:
     mov ecx, user_message_1
     mov edx, user_message_1_len
     call user_write
+    call user_yield
 
     call user_getpid
     mov ebx, eax
@@ -24,6 +26,7 @@ user_test:
     mov ecx, user_message_2
     mov edx, user_message_2_len
     call user_write
+    call user_yield
 
     mov ecx, user_message_3
     mov edx, user_message_3_len

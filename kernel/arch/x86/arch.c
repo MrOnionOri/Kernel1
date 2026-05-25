@@ -52,6 +52,10 @@ void arch_enter_user_mode(uint32_t entry, uint32_t user_stack) {
     user_mode_switch(entry, user_stack);
 }
 
+void arch_enter_user_context(const struct task_context* context) {
+    user_context_switch(context);
+}
+
 void arch_test_mapping(void) {
     vmm_test_mapping();
 }

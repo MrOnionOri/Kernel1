@@ -2,6 +2,7 @@
 
 [global user_write]
 [global user_write_dec]
+[global user_yield]
 [global user_getpid]
 [global user_ticks]
 [global user_open]
@@ -16,6 +17,7 @@
 [global user_exit]
 
 SYS_EXIT equ 2
+SYS_YIELD equ 3
 SYS_WRITE_DEC equ 4
 SYS_GETPID equ 5
 SYS_TICKS equ 6
@@ -40,6 +42,11 @@ user_write:
 
 user_write_dec:
     mov eax, SYS_WRITE_DEC
+    int 0x80
+    ret
+
+user_yield:
+    mov eax, SYS_YIELD
     int 0x80
     ret
 

@@ -8,11 +8,16 @@
 
 #define MAX_TASKS 8
 #define TASK_KERNEL_STACK_SIZE 4096
+#define USER_CODE_SELECTOR 0x1B
+#define USER_DATA_SELECTOR 0x23
 
 static struct task tasks[MAX_TASKS];
 static struct task* current_task;
 static uint32_t next_task_id;
 static uint32_t scheduler_cursor;
+static volatile uint32_t scheduler_pending_ticks;
+static uint32_t scheduler_auto_steps;
+static uint32_t scheduler_preemptions;
 static enum scheduler_mode current_scheduler_mode;
 static struct kernel_context scheduler_context;
 
@@ -79,6 +84,16 @@ static uint32_t task_open_file_count(const struct task* task) {
     return count;
 }
 
+static struct task* task_find(uint32_t id) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state != TASK_UNUSED && tasks[i].id == id) {
+            return &tasks[i];
+        }
+    }
+
+    return 0;
+}
+
 static void task_close_files(struct task* task) {
     for (uint32_t i = 0; i < TASK_MAX_FILES; i++) {
         if (task->file_fds[i] != VFS_INVALID_FD) {
@@ -86,6 +101,105 @@ static void task_close_files(struct task* task) {
             task->file_fds[i] = VFS_INVALID_FD;
         }
     }
+}
+
+static void task_print_context_details(const struct task* task) {
+    if (!task->context.valid) {
+        terminal_write("    ctx <empty>\n");
+        return;
+    }
+
+    terminal_write("    ctx eip=");
+    terminal_write_hex(task->context.eip);
+    terminal_write(" esp=");
+    terminal_write_hex(task->context.esp);
+    terminal_write(" eflags=");
+    terminal_write_hex(task->context.eflags);
+    terminal_write(" cs=");
+    terminal_write_hex(task->context.cs);
+    terminal_write(" ss=");
+    terminal_write_hex(task->context.ss);
+    terminal_write("\n    regs eax=");
+    terminal_write_hex(task->context.eax);
+    terminal_write(" ebx=");
+    terminal_write_hex(task->context.ebx);
+    terminal_write(" ecx=");
+    terminal_write_hex(task->context.ecx);
+    terminal_write(" edx=");
+    terminal_write_hex(task->context.edx);
+    terminal_write("\n    regs esi=");
+    terminal_write_hex(task->context.esi);
+    terminal_write(" edi=");
+    terminal_write_hex(task->context.edi);
+    terminal_write(" ebp=");
+    terminal_write_hex(task->context.ebp);
+    terminal_write("\n");
+}
+
+static void task_clear_context(struct task* task) {
+    task->context.eax = 0;
+    task->context.ebx = 0;
+    task->context.ecx = 0;
+    task->context.edx = 0;
+    task->context.esi = 0;
+    task->context.edi = 0;
+    task->context.ebp = 0;
+    task->context.esp = 0;
+    task->context.eip = 0;
+    task->context.eflags = 0;
+    task->context.cs = 0;
+    task->context.ss = 0;
+    task->context.valid = 0;
+}
+
+static void task_save_context(struct task* task, const struct interrupt_frame* frame) {
+    if (task == 0 || frame == 0) {
+        return;
+    }
+
+    task->context.eax = frame->eax;
+    task->context.ebx = frame->ebx;
+    task->context.ecx = frame->ecx;
+    task->context.edx = frame->edx;
+    task->context.esi = frame->esi;
+    task->context.edi = frame->edi;
+    task->context.ebp = frame->ebp;
+    task->context.esp = frame->useresp;
+    task->context.eip = frame->eip;
+    task->context.eflags = frame->eflags;
+    task->context.cs = frame->cs;
+    task->context.ss = frame->ss;
+    task->context.valid = 1;
+}
+
+static void task_load_context_into_frame(const struct task* task, struct interrupt_frame* frame) {
+    frame->ds = task->context.ss == 0 ? USER_DATA_SELECTOR : task->context.ss;
+    frame->edi = task->context.edi;
+    frame->esi = task->context.esi;
+    frame->ebp = task->context.ebp;
+    frame->esp = task->context.esp;
+    frame->ebx = task->context.ebx;
+    frame->edx = task->context.edx;
+    frame->ecx = task->context.ecx;
+    frame->eax = task->context.eax;
+    frame->eip = task->context.eip;
+    frame->cs = task->context.cs == 0 ? USER_CODE_SELECTOR : task->context.cs;
+    frame->eflags = task->context.eflags | 0x200;
+    frame->useresp = task->context.esp;
+    frame->ss = task->context.ss == 0 ? USER_DATA_SELECTOR : task->context.ss;
+}
+
+static struct task* scheduler_pick_next_ready(void) {
+    for (uint32_t scan = 0; scan < MAX_TASKS; scan++) {
+        uint32_t i = (scheduler_cursor + scan) % MAX_TASKS;
+
+        if (tasks[i].state == TASK_READY) {
+            scheduler_cursor = (i + 1) % MAX_TASKS;
+            return &tasks[i];
+        }
+    }
+
+    return 0;
 }
 
 static void task_clear_slot(struct task* task) {
@@ -99,6 +213,8 @@ static void task_clear_slot(struct task* task) {
     task->kernel_stack_top = reusable_kernel_stack_top;
     task->exit_code = 0;
     task->yields = 0;
+    task->preemptions = 0;
+    task_clear_context(task);
     task->args[0] = '\0';
     task_reset_files(task);
 }
@@ -107,6 +223,9 @@ void task_initialize(void) {
     next_task_id = 1;
     current_task = 0;
     scheduler_cursor = 0;
+    scheduler_pending_ticks = 0;
+    scheduler_auto_steps = 0;
+    scheduler_preemptions = 0;
     current_scheduler_mode = SCHEDULER_COOPERATIVE;
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
@@ -121,6 +240,17 @@ enum scheduler_mode scheduler_get_mode(void) {
 
 void scheduler_set_mode(enum scheduler_mode mode) {
     current_scheduler_mode = mode;
+    scheduler_pending_ticks = 0;
+}
+
+void scheduler_reset_stats(void) {
+    scheduler_pending_ticks = 0;
+    scheduler_auto_steps = 0;
+    scheduler_preemptions = 0;
+}
+
+uint32_t scheduler_preemption_count(void) {
+    return scheduler_preemptions;
 }
 
 void scheduler_print_status(void) {
@@ -129,9 +259,15 @@ void scheduler_print_status(void) {
     terminal_write("\n  ready=");
     terminal_write(task_has_ready() ? "yes" : "no");
     terminal_write("\n  auto preemption=");
-    terminal_write(current_scheduler_mode == SCHEDULER_AUTO ? "armed (timer hook pending)" : "off");
+    terminal_write(current_scheduler_mode == SCHEDULER_AUTO ? "irq0 user-mode" : "off");
     terminal_write("\n  cursor=");
     terminal_write_dec(scheduler_cursor);
+    terminal_write("\n  pending ticks=");
+    terminal_write_dec(scheduler_pending_ticks);
+    terminal_write("\n  auto steps=");
+    terminal_write_dec(scheduler_auto_steps);
+    terminal_write("\n  preemptions=");
+    terminal_write_dec(scheduler_preemptions);
     terminal_write("\n");
 }
 
@@ -140,10 +276,53 @@ void scheduler_tick(void) {
         return;
     }
 
-    /*
-     * Preemptive switching will live here once IRQ return can save and restore
-     * user contexts safely. For now, auto mode is an armed no-op.
-     */
+    if (task_has_ready()) {
+        scheduler_pending_ticks++;
+    }
+}
+
+int scheduler_preempt_if_needed(struct interrupt_frame* frame) {
+    if (current_scheduler_mode != SCHEDULER_AUTO ||
+            current_task == 0 ||
+            current_task->state != TASK_RUNNING ||
+            frame == 0 ||
+            (frame->cs & 0x3) != 0x3 ||
+            !task_has_ready()) {
+        return 0;
+    }
+
+    struct task* next = scheduler_pick_next_ready();
+    if (next == 0 || !next->context.valid) {
+        return 0;
+    }
+
+    task_save_context(current_task, frame);
+    current_task->entry = frame->eip;
+    current_task->user_stack_top = frame->useresp;
+    current_task->state = TASK_READY;
+    current_task->preemptions++;
+
+    next->state = TASK_RUNNING;
+    current_task = next;
+    arch_set_kernel_stack(next->kernel_stack_top);
+    task_load_context_into_frame(next, frame);
+    scheduler_auto_steps++;
+    scheduler_preemptions++;
+    return 1;
+}
+
+uint32_t scheduler_service_pending(void) {
+    if (current_scheduler_mode != SCHEDULER_AUTO ||
+            scheduler_pending_ticks == 0 ||
+            current_task != 0 ||
+            !task_has_ready()) {
+        return 0;
+    }
+
+    scheduler_pending_ticks = 0;
+    task_run_all_ready();
+    scheduler_auto_steps++;
+    return 1;
 }
 
 uint32_t task_next_id(void) {
@@ -233,8 +412,19 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
             tasks[i].user_stack_top = user_stack_top;
             tasks[i].exit_code = 0;
             tasks[i].yields = 0;
+            tasks[i].preemptions = 0;
+            task_clear_context(&tasks[i]);
+            tasks[i].context.eip = entry;
+            tasks[i].context.esp = user_stack_top;
+            tasks[i].context.eflags = 0x202;
+            tasks[i].context.cs = USER_CODE_SELECTOR;
+            tasks[i].context.ss = USER_DATA_SELECTOR;
+            tasks[i].context.valid = 1;
             string_copy(tasks[i].args, args, sizeof(tasks[i].args));
             task_reset_files(&tasks[i]);
+            if (current_scheduler_mode == SCHEDULER_AUTO) {
+                scheduler_pending_ticks++;
+            }
             return &tasks[i];
         }
     }
@@ -256,7 +446,11 @@ static void task_run_internal(struct task* task, int print_shell_return) {
 
     if (context_save(&scheduler_context) == 0) {
         arch_set_kernel_stack(task->kernel_stack_top);
-        arch_enter_user_mode(task->entry, task->user_stack_top);
+        if (task->context.valid) {
+            arch_enter_user_context(&task->context);
+        } else {
+            arch_enter_user_mode(task->entry, task->user_stack_top);
+        }
     }
 
     struct task* returned_task = current_task;
@@ -275,9 +469,7 @@ static void task_run_internal(struct task* task, int print_shell_return) {
     terminal_write("\n");
     terminal_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
 
-    if (returned_task->state == TASK_EXITED) {
-        current_task = 0;
-    }
+    current_task = 0;
 }
 
 void task_run(struct task* task) {
@@ -327,26 +519,16 @@ uint32_t task_run_all_ready_until_idle(void) {
 }
 
 int task_kill(uint32_t id, uint32_t exit_code) {
-    for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        if (tasks[i].state == TASK_UNUSED || tasks[i].id != id) {
-            continue;
-        }
+    struct task* task = task_find(id);
 
-        if (tasks[i].state == TASK_EXITED) {
-            return 0;
-        }
-
-        if (&tasks[i] == current_task) {
-            return 0;
-        }
-
-        task_close_files(&tasks[i]);
-        tasks[i].exit_code = exit_code;
-        tasks[i].state = TASK_EXITED;
-        return 1;
+    if (task == 0 || task->state == TASK_EXITED || task == current_task) {
+        return 0;
     }
 
-    return 0;
+    task_close_files(task);
+    task->exit_code = exit_code;
+    task->state = TASK_EXITED;
+    return 1;
 }
 
 int task_wait(uint32_t id, uint32_t* exit_code) {
@@ -413,16 +595,22 @@ void task_exit_current(uint32_t exit_code) {
 
 void task_yield_current(struct interrupt_frame* frame) {
     if (current_task != 0) {
+        task_save_context(current_task, frame);
         current_task->entry = frame->eip;
         current_task->user_stack_top = frame->useresp;
         current_task->state = TASK_READY;
         current_task->yields++;
+        if (current_scheduler_mode == SCHEDULER_AUTO) {
+            scheduler_pending_ticks++;
+        }
     }
 
 }
 
 void task_prepare_exit_return(struct interrupt_frame* frame, uint32_t exit_code) {
-    (void)frame;
+    if (current_task != 0) {
+        task_save_context(current_task, frame);
+    }
     task_exit_current(exit_code);
     context_restore(&scheduler_context);
 }
@@ -452,6 +640,8 @@ void task_print_all(void) {
         terminal_write_dec(tasks[i].exit_code);
         terminal_write(" y=");
         terminal_write_dec(tasks[i].yields);
+        terminal_write(" p=");
+        terminal_write_dec(tasks[i].preemptions);
         terminal_write(" files=");
         terminal_write_dec(task_open_file_count(&tasks[i]));
         terminal_write("\n");
@@ -482,14 +672,51 @@ void task_print_all_verbose(void) {
         terminal_write_dec(tasks[i].exit_code);
         terminal_write(" yields=");
         terminal_write_dec(tasks[i].yields);
+        terminal_write(" preempts=");
+        terminal_write_dec(tasks[i].preemptions);
         terminal_write(" files=");
         terminal_write_dec(task_open_file_count(&tasks[i]));
+        terminal_write("\n");
+        task_print_context_details(&tasks[i]);
         if (tasks[i].args[0] != '\0') {
             terminal_write(" args=");
             terminal_write(tasks[i].args);
         }
         terminal_write("\n");
     }
+}
+
+int task_print_context(uint32_t id) {
+    struct task* task = task_find(id);
+
+    if (task == 0) {
+        return 0;
+    }
+
+    terminal_write("Task context:\n  id=");
+    terminal_write_dec(task->id);
+    terminal_write(" name=");
+    terminal_write(task->name);
+    terminal_write(" state=");
+    terminal_write(task_state_name(task->state));
+    terminal_write("\n  entry=");
+    terminal_write_hex(task->entry);
+    terminal_write(" ustack=");
+    terminal_write_hex(task->user_stack_top);
+    terminal_write(" kstack=");
+    terminal_write_hex(task->kernel_stack_top);
+    terminal_write("\n  yields=");
+    terminal_write_dec(task->yields);
+    terminal_write(" preempts=");
+    terminal_write_dec(task->preemptions);
+    terminal_write("\n");
+    task_print_context_details(task);
+    if (task->args[0] != '\0') {
+        terminal_write("  args=");
+        terminal_write(task->args);
+        terminal_write("\n");
+    }
+    return 1;
 }
 
 void task_print_summary(void) {
@@ -529,5 +756,8 @@ void task_print_summary(void) {
     terminal_write_dec(next_task_id);
     terminal_write(" scheduler cursor=");
     terminal_write_dec(scheduler_cursor);
+    if (exited > 0) {
+        terminal_write("\n  hint: reap -a frees exited task slots");
+    }
     terminal_write("\n");
 }
