@@ -16,8 +16,9 @@ behind small arch, driver, VFS, task, and app interfaces.
   and VFS.
 - `kernel/mm`: memory managers: BIOS memory-map ingestion, physical page
   allocator, and kernel heap.
-- `kernel/drivers`: current device drivers: VGA text terminal, PS/2 keyboard,
-  PIT timer, and a minimal ATA PIO data-disk probe/read path.
+- `kernel/drivers`: current device drivers: VGA text terminal, framebuffer
+  groundwork, PS/2 keyboard, PIT timer, and a minimal ATA PIO data-disk
+  probe/read path.
 - `kernel/lib`: low-level helpers shared by the kernel.
 - `user/lib`: tiny user-mode syscall helper library.
 - `user/demo`: linked-in user-mode demo apps used for ring-3 and syscall tests.
@@ -81,8 +82,9 @@ The shell is now split into focused modules:
 - `shell_apps.c`: app/process commands: `apps`, `appinfo`, `which`, `kapp`,
   `spawn`, `run`, `runall`, `kill`, `wait`, `reap`, `ps`, `tasks`, and
   `tasksv`, plus `schedtest` for a built-in busy/demo preemption smoke test.
-- `shell_system.c`: diagnostic/system commands: `ticks`, `mem`, `pmm`, `alloc`,
-  `heap`, `kmalloc`, `paging`, `vmmtest`, `gdt`, `ring3`, and `about`.
+- `shell_system.c`: diagnostic/system commands: `ticks`, `gfx`, `mem`, `pmm`,
+  `alloc`, `heap`, `kmalloc`, `paging`, `vmmtest`, `gdt`, `ring3`, and
+  `about`.
 
 This keeps `shell.c` from becoming the owner of every feature. New command
 families should generally get their own module and a small `*_handle_line`
@@ -177,6 +179,26 @@ paths up to 51 characters inside `/disk`. File entries store the first data
 block; each data block stores a pointer to the next block followed by file
 bytes, so files can use non-contiguous sectors. The current maximum is 4096
 bytes per file.
+
+## Graphics Groundwork
+
+The visual branch starts with a portable framebuffer API in
+`kernel/drivers/framebuffer.*`:
+
+```c
+framebuffer_available();
+framebuffer_clear(color);
+framebuffer_put_pixel(x, y, color);
+framebuffer_fill_rect(x, y, width, height, color);
+```
+
+For now the framebuffer is a RAM-backed stub (`320x200x32`) so the shell and
+boot path stay stable while the drawing API takes shape. The shell command
+`gfx [info|test|desktop|preview|clear]` can inspect the mode, draw test/desktop
+mockups into that buffer, and print a downsampled ASCII preview while the real
+framebuffer is not wired yet. The next visual step is to replace the stub address with a BIOS VBE
+linear framebuffer captured during real-mode boot, then render text and mouse
+cursor pixels through this same API.
 
 ## Apps And KAPP
 
@@ -302,6 +324,7 @@ Working pieces:
 - BIOS boot into 32-bit protected mode.
 - GDT/TSS, IDT/ISR, PIC, paging, and ring-3 entry.
 - VGA terminal, keyboard input, PIT ticks.
+- Framebuffer driver groundwork with RAM-backed test surface and `gfx` command.
 - PMM and kernel heap.
 - Shell with history, cursor editing, TAB completion, variables, aliases,
   redirection, conditionals, loops, and scripts.
@@ -322,5 +345,5 @@ Recommended next steps:
 
 1. Add dynamically growing directories and longer file support.
 2. Harden IRQ0 preemption with longer stress tests and cleaner accounting.
-3. After disk/process basics are stable, begin graphics groundwork: framebuffer,
-   mouse/events, and a small UI server.
+3. Replace framebuffer stub with BIOS VBE linear framebuffer data from boot.
+4. Add graphical text rendering, then mouse/events, then a small UI server.

@@ -1,4 +1,5 @@
 #include "arch.h"
+#include "framebuffer.h"
 #include "heap.h"
 #include "keyboard.h"
 #include "pmm.h"
@@ -19,6 +20,7 @@ void kernel_main(void) {
     arch_initialize();
     pmm_initialize();
     heap_initialize();
+    framebuffer_initialize();
     task_initialize();
     arch_enable_irq(0);
     arch_enable_irq(1);

@@ -2,6 +2,7 @@
 
 #include "arch.h"
 #include "ata.h"
+#include "framebuffer.h"
 #include "heap.h"
 #include "kfs.h"
 #include "memory_map.h"
@@ -50,6 +51,10 @@ static uint32_t string_to_uint(const char* text, int* ok) {
     return value;
 }
 
+static void shell_gfx_usage(void) {
+    terminal_write("gfx: usage gfx [info|test|desktop|preview|clear]\n");
+}
+
 int shell_system_handle_line(const struct shell_line* line, int* last_status) {
     if (string_equals(line->args[0], "sched")) {
         if (line->count == 1) {
@@ -79,6 +84,35 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
         terminal_write_dec(timer_ticks());
         terminal_write("\n");
         *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "gfx")) {
+        if (line->count == 1 || (line->count == 2 && string_equals(line->args[1], "info"))) {
+            framebuffer_print_info();
+            terminal_write("  note: framebuffer is a RAM stub until VBE boot support lands\n");
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals(line->args[1], "test")) {
+            framebuffer_test_pattern();
+            terminal_write("gfx: drew test pattern into framebuffer stub\n");
+            terminal_write("gfx: next step is wiring this buffer to real VBE video memory\n");
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals(line->args[1], "desktop")) {
+            framebuffer_demo_desktop();
+            terminal_write("gfx: drew desktop mockup into framebuffer stub\n");
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals(line->args[1], "preview")) {
+            terminal_ensure_rows(28);
+            framebuffer_print_preview();
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals(line->args[1], "clear")) {
+            framebuffer_clear(0x00000000);
+            terminal_write("gfx: framebuffer cleared\n");
+            *last_status = 0;
+        } else {
+            shell_gfx_usage();
+            *last_status = 1;
+        }
         return 1;
     }
 
