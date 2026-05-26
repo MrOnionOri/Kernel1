@@ -19,6 +19,8 @@ int kfs_read_text(const char* name, char* output, uint32_t output_size,
 uint32_t kfs_allocated_bytes(uint32_t size);
 int kfs_mkdir(const char* name);
 int kfs_is_directory(const char* name);
+int kfs_get_info(const char* name, uint32_t* size, uint32_t* data_lba,
+    int* is_directory);
 int kfs_cat(const char* name);
 int kfs_stat(const char* name);
 int kfs_remove(const char* name);

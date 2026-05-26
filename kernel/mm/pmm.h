@@ -8,6 +8,8 @@
 void pmm_initialize(void);
 uint32_t pmm_alloc_page(void);
 void pmm_free_page(uint32_t address);
+uint32_t pmm_used_pages(void);
+uint32_t pmm_free_pages(void);
 void pmm_print_stats(void);
 
 #endif

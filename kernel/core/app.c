@@ -14,6 +14,10 @@ extern void busy_app(void);
 extern void clock_app(void);
 extern void probe_app(void);
 extern void reader_app(void);
+extern void selfmod_app(void);
+extern void sleeper_app(void);
+extern void lsapp_app(void);
+extern void launcher_app(void);
 
 static const struct app_descriptor apps[] = {
     { "demo", (uint32_t)user_test },
@@ -21,6 +25,10 @@ static const struct app_descriptor apps[] = {
     { "clock", (uint32_t)clock_app },
     { "probe", (uint32_t)probe_app },
     { "reader", (uint32_t)reader_app },
+    { "selfmod", (uint32_t)selfmod_app },
+    { "sleeper", (uint32_t)sleeper_app },
+    { "lsapp", (uint32_t)lsapp_app },
+    { "launcher", (uint32_t)launcher_app },
 };
 
 static int string_equals(const char* left, const char* right) {

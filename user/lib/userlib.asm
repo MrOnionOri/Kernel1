@@ -14,6 +14,11 @@
 [global user_write_file]
 [global user_append_file]
 [global user_mkdir]
+[global user_sleep]
+[global user_stat]
+[global user_readdir]
+[global user_exec]
+[global user_wait]
 [global user_exit]
 
 SYS_EXIT equ 2
@@ -31,6 +36,11 @@ SYS_APPEND_FILE equ 13
 SYS_OPEN_FLAGS equ 14
 SYS_WRITE_FD equ 15
 SYS_MKDIR equ 16
+SYS_SLEEP equ 17
+SYS_STAT equ 18
+SYS_READDIR equ 19
+SYS_EXEC equ 20
+SYS_WAIT equ 21
 STDOUT_FD equ 1
 
 section .user_text
@@ -102,6 +112,31 @@ user_append_file:
 
 user_mkdir:
     mov eax, SYS_MKDIR
+    int 0x80
+    ret
+
+user_sleep:
+    mov eax, SYS_SLEEP
+    int 0x80
+    ret
+
+user_stat:
+    mov eax, SYS_STAT
+    int 0x80
+    ret
+
+user_readdir:
+    mov eax, SYS_READDIR
+    int 0x80
+    ret
+
+user_exec:
+    mov eax, SYS_EXEC
+    int 0x80
+    ret
+
+user_wait:
+    mov eax, SYS_WAIT
     int 0x80
     ret
 

@@ -127,7 +127,11 @@ Add-Record "apps/busy.txt" ([System.Text.Encoding]::ASCII.GetBytes("busy is a bu
 Add-Record "apps/clock.txt" ([System.Text.Encoding]::ASCII.GetBytes("clock is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
 Add-Record "apps/probe.txt" ([System.Text.Encoding]::ASCII.GetBytes("probe intentionally touches unmapped user memory to test isolation.`n"))
 Add-Record "apps/reader.txt" ([System.Text.Encoding]::ASCII.GetBytes("reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.`n"))
-Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app with SYS_YIELD`nbusy|built-in|No-yield scheduler stress app`nclock|built-in|Shows PID and ticks`nprobe|built-in|Faults on unmapped user memory`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to a log file`n"))
+Add-Record "apps/selfmod.txt" ([System.Text.Encoding]::ASCII.GetBytes("selfmod intentionally writes built-in code to test read-only user pages.`n"))
+Add-Record "apps/sleeper.txt" ([System.Text.Encoding]::ASCII.GetBytes("sleeper exercises SYS_SLEEP without blocking the shell.`n"))
+Add-Record "apps/lsapp.txt" ([System.Text.Encoding]::ASCII.GetBytes("lsapp lists directories through SYS_STAT/SYS_READDIR.`n"))
+Add-Record "apps/launcher.txt" ([System.Text.Encoding]::ASCII.GetBytes("launcher uses SYS_EXEC/SYS_WAIT to run another app.`n"))
+Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app with SYS_YIELD`nbusy|built-in|No-yield scheduler stress app`nclock|built-in|Shows PID and ticks`nprobe|built-in|Faults on unmapped user memory`nreader|built-in|Reads files through VFS syscalls`nselfmod|built-in|Faults on read-only user code`nsleeper|built-in|Sleeps through SYS_SLEEP and resumes later`nlsapp|built-in|Lists directories through VFS syscalls`nlauncher|built-in|Execs and waits for another app`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to a log file`n"))
 Add-Record "apps/hello.kapp" $helloKapp
 Add-Record "apps/echo.kapp" $echoKapp
 Add-Record "apps/logger.kapp" $loggerKapp

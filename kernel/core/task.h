@@ -13,6 +13,7 @@ enum task_state {
     TASK_UNUSED = 0,
     TASK_READY,
     TASK_RUNNING,
+    TASK_SLEEPING,
     TASK_EXITED,
 };
 
@@ -51,6 +52,7 @@ struct task {
     uint32_t exit_code;
     uint32_t yields;
     uint32_t preemptions;
+    uint32_t wake_tick;
     struct task_context context;
     char args[TASK_ARGS_SIZE];
     int file_fds[TASK_MAX_FILES];
@@ -84,12 +86,15 @@ uint32_t task_run_all_ready_until_idle(void);
 int task_has_ready(void);
 int task_kill(uint32_t id, uint32_t exit_code);
 int task_wait(uint32_t id, uint32_t* exit_code);
+int task_get_exit_status(uint32_t id, uint32_t* exit_code);
 int task_reap(uint32_t id);
 uint32_t task_reap_exited(void);
 void task_exit_current(uint32_t exit_code);
 void task_yield_current(struct interrupt_frame* frame);
+void task_sleep_current(struct interrupt_frame* frame, uint32_t ticks);
 void task_prepare_exit_return(struct interrupt_frame* frame, uint32_t exit_code);
 void task_prepare_yield_return(struct interrupt_frame* frame);
+void task_prepare_sleep_return(struct interrupt_frame* frame, uint32_t ticks);
 void task_print_all(void);
 void task_print_all_verbose(void);
 int task_print_context(uint32_t id);

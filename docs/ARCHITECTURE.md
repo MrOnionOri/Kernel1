@@ -111,6 +111,9 @@ Initrd files are loaded into the VFS under paths such as:
 ```text
 apps/manifest.txt
 apps/busy.txt
+apps/sleeper.txt
+apps/lsapp.txt
+apps/launcher.txt
 apps/hello.kapp
 apps/echo.kapp
 apps/logger.kapp
@@ -218,6 +221,7 @@ Tasks track:
 - per-task file descriptors.
 - saved user context snapshot: general registers, `eip`, `esp`, `eflags`,
   `cs`, and `ss` for scheduler/debug groundwork.
+- wake tick for tasks sleeping through `SYS_SLEEP`.
 
 User-mode apps use `int 0x80` for syscalls. Foreground `run` executes a task
 until it exits. `spawn` creates a ready task that can later be driven by
@@ -234,6 +238,12 @@ auto scheduling, runs until idle, and prints the scheduler summary. Use
 `schedtest -r` to reap exited tasks after the test, and `schedtest -r -n N` to
 repeat the smoke test for multiple rounds. It prints `PASS` only if all tasks
 finish and at least one IRQ0 preemption was observed.
+`memtest` snapshots PMM used pages, spawns KAPP and built-in tasks, runs them,
+reaps exited tasks, and prints `PASS` only when used pages return to the
+baseline after `reap`.
+`SYS_SLEEP` puts the current task into a sleeping state until the PIT tick count
+reaches its wake tick. The shell stays responsive; once the timer wakes the
+task, `runall` or auto scheduling can resume it.
 `ps -v` prints the saved context snapshot for each non-unused task, while
 `ctx <id>` prints one task context in a more focused form. The x86 arch layer
 can now enter ring 3 from a saved task context, which is the manual/cooperative
@@ -268,6 +278,12 @@ Current syscalls:
 14 SYS_OPEN_FLAGS ebx=path ecx=flags            returns fd or -1
 15 SYS_WRITE_FD   ebx=fd ecx=buffer edx=len     returns bytes written or -1
 16 SYS_MKDIR      ebx=path                      returns 0 or -1
+17 SYS_SLEEP      ebx=ticks                     yields until PIT tick target
+18 SYS_STAT       ebx=path ecx=stat_info*       returns 0 or -1
+19 SYS_READDIR    ebx=path ecx=index edx=dirent*
+                                                    returns 1, 0 end, or -1
+20 SYS_EXEC       ebx=app/path ecx=args          returns pid or -1
+21 SYS_WAIT       ebx=pid                        returns exit, -2 running, or -1
 ```
 
 The syscall layer validates user pointers against the current task's own user
@@ -290,12 +306,15 @@ Working pieces:
 - Shell with history, cursor editing, TAB completion, variables, aliases,
   redirection, conditionals, loops, and scripts.
 - VFS over initrd, RAM files, and the `/disk` KFS mount.
-- Built-in user apps, including `demo` with `SYS_YIELD` and `busy` without
-  yield, plus `probe` for memory-isolation fault tests and KAPP apps.
+- Built-in user apps, including `demo` with `SYS_YIELD`, `busy` without yield,
+  `probe` for unmapped-memory tests, `selfmod` for read-only code tests, and
+  `sleeper` for `SYS_SLEEP` tests, `lsapp` for `SYS_STAT`/`SYS_READDIR`
+  tests, `launcher` for `SYS_EXEC`/`SYS_WAIT` tests, and KAPP apps.
 - Basic task table and foreground/background execution flow with wait, kill,
   reap, task summaries, and saved context snapshots.
 - Per-task page directories plus user memory metadata used by syscall pointer
   validation.
+- `memtest` smoke test for process memory cleanup after `reap`.
 
 ## Next Work
 

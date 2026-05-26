@@ -132,6 +132,14 @@ void pmm_free_page(uint32_t address) {
     }
 }
 
+uint32_t pmm_used_pages(void) {
+    return used_pages;
+}
+
+uint32_t pmm_free_pages(void) {
+    return PMM_MAX_PAGES - used_pages;
+}
+
 void pmm_print_stats(void) {
     terminal_write("PMM page size: ");
     terminal_write_dec(PMM_PAGE_SIZE);

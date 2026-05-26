@@ -50,7 +50,7 @@ static int prepare_user_test_memory(uint32_t page_directory, uint32_t user_stack
         }
     }
 
-    if (!map_user_range(page_directory, user_region_start, user_region_end, ARCH_PAGE_WRITABLE)) {
+    if (!map_user_range(page_directory, user_region_start, user_region_end, 0)) {
         terminal_write("ring3 failed: user image map failed\n");
         return 0;
     }

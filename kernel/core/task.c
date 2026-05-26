@@ -4,6 +4,7 @@
 #include "arch.h"
 #include "heap.h"
 #include "terminal.h"
+#include "timer.h"
 #include "vfs.h"
 
 #define MAX_TASKS 8
@@ -21,6 +22,8 @@ static uint32_t scheduler_preemptions;
 static enum scheduler_mode current_scheduler_mode;
 static struct kernel_context scheduler_context;
 
+static void task_wake_sleeping(void);
+
 static const char* task_state_name(enum task_state state) {
     switch (state) {
         case TASK_UNUSED:
@@ -29,6 +32,8 @@ static const char* task_state_name(enum task_state state) {
             return "ready";
         case TASK_RUNNING:
             return "running";
+        case TASK_SLEEPING:
+            return "sleeping";
         case TASK_EXITED:
             return "exited";
         default:
@@ -202,6 +207,8 @@ static void task_load_context_into_frame(const struct task* task, struct interru
 }
 
 static struct task* scheduler_pick_next_ready(void) {
+    task_wake_sleeping();
+
     for (uint32_t scan = 0; scan < MAX_TASKS; scan++) {
         uint32_t i = (scheduler_cursor + scan) % MAX_TASKS;
 
@@ -212,6 +219,24 @@ static struct task* scheduler_pick_next_ready(void) {
     }
 
     return 0;
+}
+
+static int ticks_reached(uint32_t now, uint32_t target) {
+    return (int32_t)(now - target) >= 0;
+}
+
+static void task_wake_sleeping(void) {
+    uint32_t now = timer_ticks();
+
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].state == TASK_SLEEPING && ticks_reached(now, tasks[i].wake_tick)) {
+            tasks[i].state = TASK_READY;
+            tasks[i].wake_tick = 0;
+            if (current_scheduler_mode == SCHEDULER_AUTO) {
+                scheduler_pending_ticks++;
+            }
+        }
+    }
 }
 
 static void task_clear_slot(struct task* task) {
@@ -234,6 +259,7 @@ static void task_clear_slot(struct task* task) {
     task->exit_code = 0;
     task->yields = 0;
     task->preemptions = 0;
+    task->wake_tick = 0;
     task_clear_context(task);
     task->args[0] = '\0';
     task_reset_files(task);
@@ -292,6 +318,8 @@ void scheduler_print_status(void) {
 }
 
 void scheduler_tick(void) {
+    task_wake_sleeping();
+
     if (current_scheduler_mode != SCHEDULER_AUTO) {
         return;
     }
@@ -442,6 +470,7 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
             tasks[i].exit_code = 0;
             tasks[i].yields = 0;
             tasks[i].preemptions = 0;
+            tasks[i].wake_tick = 0;
             task_clear_context(&tasks[i]);
             tasks[i].context.eip = entry;
             tasks[i].context.esp = user_stack_top;
@@ -496,6 +525,10 @@ struct task* task_create_user(uint32_t entry, uint32_t user_stack_top) {
 }
 
 static void task_run_internal(struct task* task, int print_shell_return) {
+    if (task == 0 || task->state != TASK_READY) {
+        return;
+    }
+
     current_task = task;
     task->state = TASK_RUNNING;
 
@@ -530,14 +563,12 @@ static void task_run_internal(struct task* task, int print_shell_return) {
 }
 
 void task_run(struct task* task) {
-    if (task == 0 || task->state != TASK_READY) {
-        return;
-    }
-
     task_run_internal(task, 1);
 }
 
 int task_has_ready(void) {
+    task_wake_sleeping();
+
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (tasks[i].state == TASK_READY) {
             return 1;
@@ -549,6 +580,8 @@ int task_has_ready(void) {
 
 void task_run_all_ready(void) {
     uint32_t start_cursor = scheduler_cursor;
+
+    task_wake_sleeping();
 
     for (uint32_t scan = 0; scan < MAX_TASKS; scan++) {
         uint32_t i = (scheduler_cursor + scan) % MAX_TASKS;
@@ -594,8 +627,11 @@ int task_wait(uint32_t id, uint32_t* exit_code) {
             continue;
         }
 
-        while (tasks[i].state == TASK_READY) {
-            task_run_internal(&tasks[i], 0);
+        while (tasks[i].state == TASK_READY || tasks[i].state == TASK_SLEEPING) {
+            task_wake_sleeping();
+            if (tasks[i].state == TASK_READY) {
+                task_run_internal(&tasks[i], 0);
+            }
         }
 
         if (tasks[i].state == TASK_EXITED) {
@@ -609,6 +645,24 @@ int task_wait(uint32_t id, uint32_t* exit_code) {
     }
 
     return 0;
+}
+
+int task_get_exit_status(uint32_t id, uint32_t* exit_code) {
+    task_wake_sleeping();
+
+    struct task* task = task_find(id);
+    if (task == 0) {
+        return -1;
+    }
+
+    if (task->state != TASK_EXITED) {
+        return 0;
+    }
+
+    if (exit_code != 0) {
+        *exit_code = task->exit_code;
+    }
+    return 1;
 }
 
 int task_reap(uint32_t id) {
@@ -663,6 +717,20 @@ void task_yield_current(struct interrupt_frame* frame) {
 
 }
 
+void task_sleep_current(struct interrupt_frame* frame, uint32_t ticks) {
+    if (current_task != 0) {
+        task_save_context(current_task, frame);
+        current_task->entry = frame->eip;
+        current_task->state = ticks == 0 ? TASK_READY : TASK_SLEEPING;
+        current_task->wake_tick = ticks == 0 ? 0 : timer_ticks() + ticks;
+        current_task->yields++;
+        if (current_scheduler_mode == SCHEDULER_AUTO && ticks == 0) {
+            scheduler_pending_ticks++;
+        }
+    }
+
+}
+
 void task_prepare_exit_return(struct interrupt_frame* frame, uint32_t exit_code) {
     if (current_task != 0) {
         task_save_context(current_task, frame);
@@ -676,7 +744,13 @@ void task_prepare_yield_return(struct interrupt_frame* frame) {
     context_restore(&scheduler_context);
 }
 
+void task_prepare_sleep_return(struct interrupt_frame* frame, uint32_t ticks) {
+    task_sleep_current(frame, ticks);
+    context_restore(&scheduler_context);
+}
+
 void task_print_all(void) {
+    task_wake_sleeping();
     terminal_write("Tasks:\n");
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
@@ -704,6 +778,10 @@ void task_print_all(void) {
         terminal_write_dec(tasks[i].yields);
         terminal_write(" p=");
         terminal_write_dec(tasks[i].preemptions);
+        if (tasks[i].state == TASK_SLEEPING) {
+            terminal_write(" wake=");
+            terminal_write_dec(tasks[i].wake_tick);
+        }
         terminal_write(" files=");
         terminal_write_dec(task_open_file_count(&tasks[i]));
         terminal_write("\n");
@@ -711,6 +789,7 @@ void task_print_all(void) {
 }
 
 void task_print_all_verbose(void) {
+    task_wake_sleeping();
     terminal_write("Tasks verbose:\n");
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
@@ -746,6 +825,10 @@ void task_print_all_verbose(void) {
         terminal_write_dec(tasks[i].yields);
         terminal_write(" preempts=");
         terminal_write_dec(tasks[i].preemptions);
+        if (tasks[i].state == TASK_SLEEPING) {
+            terminal_write(" wake=");
+            terminal_write_dec(tasks[i].wake_tick);
+        }
         terminal_write(" files=");
         terminal_write_dec(task_open_file_count(&tasks[i]));
         terminal_write("\n");
@@ -759,6 +842,7 @@ void task_print_all_verbose(void) {
 }
 
 int task_print_context(uint32_t id) {
+    task_wake_sleeping();
     struct task* task = task_find(id);
 
     if (task == 0) {
@@ -802,9 +886,11 @@ int task_print_context(uint32_t id) {
 }
 
 void task_print_summary(void) {
+    task_wake_sleeping();
     uint32_t unused = 0;
     uint32_t ready = 0;
     uint32_t running = 0;
+    uint32_t sleeping = 0;
     uint32_t exited = 0;
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
@@ -817,6 +903,9 @@ void task_print_summary(void) {
                 break;
             case TASK_RUNNING:
                 running++;
+                break;
+            case TASK_SLEEPING:
+                sleeping++;
                 break;
             case TASK_EXITED:
                 exited++;
@@ -832,6 +921,8 @@ void task_print_summary(void) {
     terminal_write_dec(running);
     terminal_write(" exited=");
     terminal_write_dec(exited);
+    terminal_write(" sleeping=");
+    terminal_write_dec(sleeping);
     terminal_write(" unused=");
     terminal_write_dec(unused);
     terminal_write("\n  next id=");

@@ -853,6 +853,42 @@ int kfs_is_directory(const char* name) {
     return dir_sector[offset] == KFS_ENTRY_FLAG_DIRECTORY;
 }
 
+int kfs_get_info(const char* name, uint32_t* size, uint32_t* data_lba,
+        int* is_directory) {
+    struct kfs_superblock superblock;
+    uint8_t dir_sector[KFS_SECTOR_SIZE];
+    uint32_t slot = 0;
+    int found = 0;
+
+    if (!valid_name(name) || !read_superblock(&superblock)) {
+        return 0;
+    }
+
+    if (!find_slot(&superblock, name, &slot, &found) || !found) {
+        return 0;
+    }
+
+    uint32_t dir_lba = entry_sector_lba(slot);
+    uint32_t offset = entry_sector_offset(slot);
+    if (!ata_read_data_sector(dir_lba, dir_sector)) {
+        return 0;
+    }
+
+    if (size != 0) {
+        *size = read_u32(dir_sector, offset + KFS_ENTRY_SIZE_OFFSET);
+    }
+
+    if (data_lba != 0) {
+        *data_lba = read_u32(dir_sector, offset + KFS_ENTRY_DATA_LBA_OFFSET);
+    }
+
+    if (is_directory != 0) {
+        *is_directory = dir_sector[offset] == KFS_ENTRY_FLAG_DIRECTORY;
+    }
+
+    return 1;
+}
+
 int kfs_mkdir(const char* name) {
     struct kfs_superblock superblock;
     uint8_t dir_sector[KFS_SECTOR_SIZE];

@@ -1,14 +1,53 @@
 #include "syscall.h"
 
+#include "app.h"
+#include "kapp.h"
 #include "task.h"
 #include "terminal.h"
 #include "timer.h"
+#include "user_mode.h"
 #include "vfs.h"
 
 #define STDOUT_FD 1
 #define USER_FILE_FD_BASE 3
 #define WRITE_BUF_MAX 1024
 #define USER_STRING_MAX 128
+#define SYS_WAIT_RUNNING ((int32_t)-2)
+
+static int string_ends_with(const char* text, const char* suffix) {
+    uint32_t text_length = 0;
+    uint32_t suffix_length = 0;
+
+    while (text[text_length] != '\0') {
+        text_length++;
+    }
+
+    while (suffix[suffix_length] != '\0') {
+        suffix_length++;
+    }
+
+    if (suffix_length > text_length) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < suffix_length; i++) {
+        if (text[text_length - suffix_length + i] != suffix[i]) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int string_contains_char(const char* text, char needle) {
+    for (uint32_t i = 0; text[i] != '\0'; i++) {
+        if (text[i] == needle) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
 
 static int user_range_is_valid(const void* pointer, uint32_t length) {
     if (pointer == 0) {
@@ -34,6 +73,22 @@ static int user_string_is_valid(const char* text) {
     }
 
     return 0;
+}
+
+static int copy_user_string(char* destination, const char* source, uint32_t size) {
+    uint32_t index = 0;
+
+    if (destination == 0 || source == 0 || size == 0 || !user_string_is_valid(source)) {
+        return 0;
+    }
+
+    while (index < size - 1 && source[index] != '\0') {
+        destination[index] = source[index];
+        index++;
+    }
+
+    destination[index] = '\0';
+    return 1;
 }
 
 static void syscall_write(const char* text) {
@@ -74,6 +129,11 @@ static void syscall_write_dec(uint32_t value) {
 
 static void syscall_yield(struct interrupt_frame* frame) {
     task_prepare_yield_return(frame);
+}
+
+static void syscall_sleep(struct interrupt_frame* frame, uint32_t ticks) {
+    frame->eax = 0;
+    task_prepare_sleep_return(frame, ticks);
 }
 
 static int32_t syscall_open(const char* path) {
@@ -188,6 +248,82 @@ static int32_t syscall_mkdir(const char* path) {
     return vfs_mkdir(path) ? 0 : -1;
 }
 
+static int32_t syscall_stat(const char* path, struct vfs_stat_info* info) {
+    if (!user_string_is_valid(path) ||
+            !user_range_is_valid(info, sizeof(struct vfs_stat_info))) {
+        return -1;
+    }
+
+    return vfs_stat_info(path, info) ? 0 : -1;
+}
+
+static int32_t syscall_readdir(const char* path, uint32_t index,
+        struct vfs_dir_entry* entry) {
+    if (!user_string_is_valid(path) ||
+            !user_range_is_valid(entry, sizeof(struct vfs_dir_entry))) {
+        return -1;
+    }
+
+    return vfs_read_dir(path, index, entry);
+}
+
+static int32_t syscall_exec(const char* user_name, const char* user_args) {
+    char name[32];
+    char args[TASK_ARGS_SIZE];
+    struct task* task = 0;
+
+    if (!copy_user_string(name, user_name, sizeof(name))) {
+        return -1;
+    }
+
+    if (user_args == 0) {
+        args[0] = '\0';
+    } else if (!copy_user_string(args, user_args, sizeof(args))) {
+        return -1;
+    }
+
+    if (string_contains_char(name, '/') || string_ends_with(name, ".kapp")) {
+        task = kapp_spawn_path(name, args);
+        return task == 0 ? -1 : (int32_t)task->id;
+    }
+
+    enum app_kind kind = app_manifest_kind(name);
+    const struct app_descriptor* app = app_find(name);
+
+    if (kind == APP_KIND_BUILT_IN && app != 0) {
+        task = user_mode_spawn_app_with_args(app->name, app->entry, args);
+        return task == 0 ? -1 : (int32_t)task->id;
+    }
+
+    if (kind == APP_KIND_KAPP) {
+        task = kapp_spawn_app(name, args);
+        return task == 0 ? -1 : (int32_t)task->id;
+    }
+
+    if (app != 0) {
+        task = user_mode_spawn_app_with_args(app->name, app->entry, args);
+        return task == 0 ? -1 : (int32_t)task->id;
+    }
+
+    task = kapp_spawn_app(name, args);
+    return task == 0 ? -1 : (int32_t)task->id;
+}
+
+static int32_t syscall_wait(uint32_t task_id) {
+    uint32_t exit_code = 0;
+    int status = task_get_exit_status(task_id, &exit_code);
+
+    if (status < 0) {
+        return -1;
+    }
+
+    if (status == 0) {
+        return SYS_WAIT_RUNNING;
+    }
+
+    return (int32_t)exit_code;
+}
+
 void syscall_dispatch(struct interrupt_frame* frame) {
     switch (frame->eax) {
         case SYS_WRITE:
@@ -238,6 +374,24 @@ void syscall_dispatch(struct interrupt_frame* frame) {
             break;
         case SYS_MKDIR:
             frame->eax = (uint32_t)syscall_mkdir((const char*)frame->ebx);
+            break;
+        case SYS_SLEEP:
+            syscall_sleep(frame, frame->ebx);
+            break;
+        case SYS_STAT:
+            frame->eax = (uint32_t)syscall_stat((const char*)frame->ebx,
+                (struct vfs_stat_info*)frame->ecx);
+            break;
+        case SYS_READDIR:
+            frame->eax = (uint32_t)syscall_readdir((const char*)frame->ebx,
+                frame->ecx, (struct vfs_dir_entry*)frame->edx);
+            break;
+        case SYS_EXEC:
+            frame->eax = (uint32_t)syscall_exec((const char*)frame->ebx,
+                (const char*)frame->ecx);
+            break;
+        case SYS_WAIT:
+            frame->eax = (uint32_t)syscall_wait(frame->ebx);
             break;
         default:
             terminal_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);

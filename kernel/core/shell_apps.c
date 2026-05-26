@@ -2,6 +2,7 @@
 
 #include "app.h"
 #include "kapp.h"
+#include "pmm.h"
 #include "shell_fs.h"
 #include "task.h"
 #include "terminal.h"
@@ -188,8 +189,16 @@ static struct task* shell_spawn_app_text(const char* app_text) {
 static void shell_run_foreground(struct task* task) {
     terminal_ensure_rows(6);
 
-    while (task != 0 && task->state == TASK_READY) {
-        task_run(task);
+    while (task != 0 && task->state != TASK_UNUSED && task->state != TASK_EXITED) {
+        if (task->state == TASK_READY) {
+            task_run(task);
+        }
+
+        if (task->state != TASK_EXITED && task_has_ready()) {
+            task_run_all_ready();
+        } else {
+            task_has_ready();
+        }
     }
 }
 
@@ -403,6 +412,91 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
         }
         scheduler_set_mode(previous_mode);
         *last_status = (failed || task_has_ready() || preemptions_after == preemptions_before) ? 1 : 0;
+        return 1;
+    }
+
+    if (string_equals(line->args[0], "memtest")) {
+        enum scheduler_mode previous_mode = scheduler_get_mode();
+        uint32_t cleaned_before = task_reap_exited();
+        uint32_t baseline = pmm_used_pages();
+        uint32_t after_spawn;
+        uint32_t after_run;
+        uint32_t after_reap;
+        uint32_t ran;
+        uint32_t reaped;
+        int failed = 0;
+
+        terminal_ensure_rows(14);
+        terminal_write("memtest: process memory reap test\n");
+        if (cleaned_before != 0) {
+            terminal_write("memtest: cleaned stale exited tasks ");
+            terminal_write_dec(cleaned_before);
+            terminal_write("\n");
+            baseline = pmm_used_pages();
+        }
+
+        terminal_write("memtest: baseline used pages ");
+        terminal_write_dec(baseline);
+        terminal_write("\n");
+
+        scheduler_set_mode(SCHEDULER_COOPERATIVE);
+        if (shell_spawn_app_text("hello") == 0 ||
+                shell_spawn_app_text("echo memory") == 0 ||
+                shell_spawn_app_text("demo") == 0) {
+            terminal_write("memtest: spawn failed\n");
+            failed = 1;
+        }
+
+        after_spawn = pmm_used_pages();
+        terminal_write("memtest: after spawn used pages ");
+        terminal_write_dec(after_spawn);
+        terminal_write(" delta=");
+        terminal_write_dec(after_spawn - baseline);
+        terminal_write("\n");
+
+        if (!failed) {
+            ran = task_run_all_ready_until_idle();
+            terminal_write("memtest: scheduler steps ");
+            terminal_write_dec(ran);
+            terminal_write("\n");
+        }
+
+        after_run = pmm_used_pages();
+        terminal_write("memtest: after run used pages ");
+        terminal_write_dec(after_run);
+        terminal_write("\n");
+
+        reaped = task_reap_exited();
+        after_reap = pmm_used_pages();
+        terminal_write("memtest: reaped ");
+        terminal_write_dec(reaped);
+        terminal_write(" tasks\n");
+        terminal_write("memtest: after reap used pages ");
+        terminal_write_dec(after_reap);
+        terminal_write(" delta=");
+        if (after_reap >= baseline) {
+            terminal_write_dec(after_reap - baseline);
+        } else {
+            terminal_putchar('-');
+            terminal_write_dec(baseline - after_reap);
+        }
+        terminal_write("\n");
+
+        if (!failed && after_spawn > baseline && after_reap == baseline) {
+            terminal_write("memtest: PASS\n");
+            *last_status = 0;
+        } else {
+            terminal_write("memtest: FAIL\n");
+            if (after_spawn <= baseline) {
+                terminal_write("memtest: spawn did not allocate visible pages\n");
+            }
+            if (after_reap != baseline) {
+                terminal_write("memtest: memory leak or over-free detected\n");
+            }
+            *last_status = 1;
+        }
+
+        scheduler_set_mode(previous_mode);
         return 1;
     }
 

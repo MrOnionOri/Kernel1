@@ -19,6 +19,11 @@
 #define SYS_OPEN_FLAGS 14
 #define SYS_WRITE_FD 15
 #define SYS_MKDIR 16
+#define SYS_SLEEP 17
+#define SYS_STAT 18
+#define SYS_READDIR 19
+#define SYS_EXEC 20
+#define SYS_WAIT 21
 
 void syscall_dispatch(struct interrupt_frame* frame);
 
