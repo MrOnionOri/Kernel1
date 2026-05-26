@@ -29,6 +29,8 @@ void framebuffer_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t heig
 void framebuffer_write_text(uint32_t x, uint32_t y, const char* text, uint32_t color);
 void framebuffer_test_pattern(void);
 void framebuffer_demo_desktop(void);
+void framebuffer_draw_status_panel(uint32_t ticks, uint32_t used_pages, uint32_t free_pages,
+    const char* scheduler_mode, uint32_t preemptions);
 void framebuffer_console_reset(void);
 void framebuffer_console_write(const char* text);
 void framebuffer_console_cursor_left(void);

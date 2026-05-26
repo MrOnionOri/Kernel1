@@ -316,6 +316,50 @@ static void framebuffer_draw_window(uint32_t x, uint32_t y, uint32_t width, uint
     framebuffer_fill_rect(x + 20, y + 4, 4, 4, 0x0028C840);
 }
 
+static void framebuffer_uint_to_text(uint32_t value, char* output, uint32_t output_size) {
+    char reversed[12];
+    uint32_t count = 0;
+    uint32_t index = 0;
+
+    if (output_size == 0) {
+        return;
+    }
+
+    if (value == 0) {
+        if (output_size > 1) {
+            output[0] = '0';
+            output[1] = '\0';
+        } else {
+            output[0] = '\0';
+        }
+        return;
+    }
+
+    while (value != 0 && count < sizeof(reversed)) {
+        reversed[count++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+
+    while (count > 0 && index + 1 < output_size) {
+        output[index++] = reversed[--count];
+    }
+    output[index] = '\0';
+}
+
+static void framebuffer_write_label_uint(uint32_t x, uint32_t y, const char* label,
+        uint32_t value, uint32_t color) {
+    char number[12];
+    uint32_t label_width = 0;
+
+    framebuffer_write_text(x, y, label, color);
+    while (label[label_width] != '\0') {
+        label_width++;
+    }
+
+    framebuffer_uint_to_text(value, number, sizeof(number));
+    framebuffer_write_text(x + label_width * 6, y, number, color);
+}
+
 void framebuffer_demo_desktop(void) {
     framebuffer_clear(0x00181A20);
     framebuffer_fill_rect(0, 0, framebuffer.width, 18, 0x00262A33);
@@ -330,6 +374,48 @@ void framebuffer_demo_desktop(void) {
     framebuffer_fill_rect(188, 74, 76, 10, 0x00FFD166);
     framebuffer_fill_rect(188, 94, 56, 10, 0x00FF6B6B);
     framebuffer_fill_rect(130, 164, 60, 12, 0x0045A3FF);
+}
+
+void framebuffer_draw_status_panel(uint32_t ticks, uint32_t used_pages, uint32_t free_pages,
+        const char* scheduler_mode, uint32_t preemptions) {
+    uint32_t panel_x = framebuffer.hardware_backed ? 360 : 24;
+    uint32_t panel_y = framebuffer.hardware_backed ? 38 : 22;
+    uint32_t panel_width = framebuffer.hardware_backed ? 290 : 250;
+    uint32_t panel_height = 112;
+    uint32_t total_pages = used_pages + free_pages;
+    uint32_t bar_width = panel_width - 28;
+    uint32_t used_width = 0;
+
+    if (!framebuffer_available()) {
+        return;
+    }
+
+    if (panel_x + panel_width + 8 > framebuffer.width) {
+        panel_x = framebuffer.width > panel_width + 12 ? framebuffer.width - panel_width - 12 : 4;
+    }
+
+    framebuffer_fill_rect(panel_x + 4, panel_y + 4, panel_width, panel_height, 0x00000000);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, panel_height, 0x001C2430);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, 15, 0x0045A3FF);
+    framebuffer_draw_rect(panel_x, panel_y, panel_width, panel_height, 0x00DCE7F3);
+    framebuffer_write_text(panel_x + 8, panel_y + 5, "KERNEL STATUS", 0x00FFFFFF);
+
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 26, "TICKS ", ticks, 0x00E8EAED);
+    framebuffer_write_text(panel_x + 12, panel_y + 38, "SCHED ", 0x00E8EAED);
+    framebuffer_write_text(panel_x + 48, panel_y + 38, scheduler_mode, 0x0048D597);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 50, "PREEMPT ", preemptions, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 62, "PMM USED ", used_pages, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 74, "PMM FREE ", free_pages, 0x00E8EAED);
+
+    framebuffer_draw_rect(panel_x + 12, panel_y + 91, bar_width, 10, 0x009EA7B3);
+    if (total_pages != 0) {
+        used_width = (used_pages * (bar_width - 2)) / total_pages;
+    }
+    framebuffer_fill_rect(panel_x + 13, panel_y + 92, used_width, 8, 0x00FF6B6B);
+    if (used_width + 2 < bar_width) {
+        framebuffer_fill_rect(panel_x + 13 + used_width, panel_y + 92,
+            bar_width - used_width - 2, 8, 0x0048D597);
+    }
 }
 
 static uint32_t framebuffer_console_cols(void) {

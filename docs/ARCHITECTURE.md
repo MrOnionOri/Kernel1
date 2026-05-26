@@ -37,7 +37,7 @@ The build scripts reserve fixed disk-image space for the kernel and initrd. If
 the kernel image grows, the sector constants in `build.sh`, `build.ps1`, and the
 initrd load address in `kernel/core/initrd.c` must stay in sync. The boot sector
 loads the reserved kernel area plus the initrd sectors, so its `KERNEL_SECTORS`
-constant is currently `kernel sectors + initrd sectors`.
+constant is currently `kernel sectors + initrd sectors` (`292 + 16 = 308`).
 
 ## Portability Rule
 

@@ -28,6 +28,28 @@ static int string_equals(const char* left, const char* right) {
     return left[index] == right[index];
 }
 
+static char ascii_lower(char character) {
+    if (character >= 'A' && character <= 'Z') {
+        return (char)(character - 'A' + 'a');
+    }
+
+    return character;
+}
+
+static int string_equals_ci(const char* left, const char* right) {
+    size_t index = 0;
+
+    while (left[index] != '\0' && right[index] != '\0') {
+        if (ascii_lower(left[index]) != ascii_lower(right[index])) {
+            return 0;
+        }
+
+        index++;
+    }
+
+    return left[index] == right[index];
+}
+
 static uint32_t string_to_uint(const char* text, int* ok) {
     uint32_t value = 0;
     size_t index = 0;
@@ -52,13 +74,111 @@ static uint32_t string_to_uint(const char* text, int* ok) {
 }
 
 static void shell_gfx_usage(void) {
-    terminal_write("gfx: usage gfx [info|test|desktop|console [text]|mirror [on|off|status|clear]|preview|clear]\n");
+    terminal_write("gfx: usage gfx [info|status|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]\n");
 }
 
 static void shell_gfx_restore_console_overlay(void) {
     if (terminal_graphics_mirror_enabled()) {
         framebuffer_console_reset();
     }
+}
+
+static int shell_gfx_scene_command(const struct shell_line* line, int* last_status, size_t command_index) {
+    if (line->count <= command_index) {
+        terminal_write("gfx scene: usage gfx scene <desktop|test|clear>\n");
+        *last_status = 1;
+        return 1;
+    }
+
+    if (string_equals_ci(line->args[command_index], "desktop")) {
+        framebuffer_demo_desktop();
+        shell_gfx_restore_console_overlay();
+        terminal_write("gfx: scene desktop drawn\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals_ci(line->args[command_index], "test")) {
+        framebuffer_test_pattern();
+        shell_gfx_restore_console_overlay();
+        terminal_write("gfx: scene test drawn\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals_ci(line->args[command_index], "clear")) {
+        framebuffer_clear(0x00000000);
+        shell_gfx_restore_console_overlay();
+        terminal_write("gfx: scene cleared\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    terminal_write("gfx scene: usage gfx scene <desktop|test|clear>\n");
+    *last_status = 1;
+    return 1;
+}
+
+static int shell_gfx_shell_command(const struct shell_line* line, int* last_status, size_t command_index) {
+    if (line->count <= command_index ||
+            string_equals_ci(line->args[command_index], "status")) {
+        if (framebuffer_get_info()->hardware_backed && !terminal_graphics_mirror_enabled()) {
+            framebuffer_console_reset();
+            terminal_set_graphics_mirror(1);
+        }
+        terminal_write("gfx shell: ");
+        terminal_write(terminal_graphics_mirror_enabled() ? "on\n" : "off\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals_ci(line->args[command_index], "on")) {
+        framebuffer_console_reset();
+        terminal_set_graphics_mirror(1);
+        terminal_write("gfx: shell overlay on\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals_ci(line->args[command_index], "off")) {
+        if (framebuffer_get_info()->hardware_backed) {
+            if (!terminal_graphics_mirror_enabled()) {
+                framebuffer_console_reset();
+                terminal_set_graphics_mirror(1);
+            }
+            terminal_write("gfx: shell overlay stays on in hardware graphics mode\n");
+            *last_status = 0;
+            return 1;
+        }
+
+        terminal_set_graphics_mirror(0);
+        terminal_write("gfx: shell overlay off\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals_ci(line->args[command_index], "clear")) {
+        int mirror_was_enabled = terminal_graphics_mirror_enabled();
+        terminal_set_graphics_mirror(0);
+        framebuffer_console_reset();
+        if (mirror_was_enabled) {
+            terminal_set_graphics_mirror(1);
+        }
+        terminal_write("gfx: shell overlay cleared\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    if (string_equals_ci(line->args[command_index], "demo")) {
+        framebuffer_demo_console();
+        terminal_write("gfx: shell demo drawn\n");
+        *last_status = 0;
+        return 1;
+    }
+
+    terminal_write("gfx shell: usage gfx shell <on|off|status|clear|demo>\n");
+    *last_status = 1;
+    return 1;
 }
 
 int shell_system_handle_line(const struct shell_line* line, int* last_status) {
@@ -93,8 +213,8 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
         return 1;
     }
 
-    if (string_equals(line->args[0], "gfx")) {
-        if (line->count == 1 || (line->count == 2 && string_equals(line->args[1], "info"))) {
+    if (string_equals_ci(line->args[0], "gfx")) {
+        if (line->count == 1 || (line->count == 2 && string_equals_ci(line->args[1], "info"))) {
             framebuffer_print_info();
             if (framebuffer_get_info()->hardware_backed) {
                 terminal_write("  note: hardware framebuffer is active\n");
@@ -102,65 +222,52 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
                 terminal_write("  note: framebuffer is a RAM stub until VBE boot support lands\n");
             }
             *last_status = 0;
-        } else if (line->count == 2 && string_equals(line->args[1], "test")) {
-            framebuffer_test_pattern();
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "status")) {
+            framebuffer_draw_status_panel(timer_ticks(), pmm_used_pages(), pmm_free_pages(),
+                scheduler_mode_name(scheduler_get_mode()), scheduler_preemption_count());
             shell_gfx_restore_console_overlay();
-            terminal_write("gfx: drew test pattern into framebuffer\n");
+            terminal_write("gfx: status panel drawn\n");
             *last_status = 0;
-        } else if (line->count == 2 && string_equals(line->args[1], "desktop")) {
-            framebuffer_demo_desktop();
-            shell_gfx_restore_console_overlay();
-            terminal_write("gfx: drew desktop mockup into framebuffer\n");
-            *last_status = 0;
-        } else if (line->count == 2 && string_equals(line->args[1], "console")) {
+        } else if (line->count >= 2 && string_equals_ci(line->args[1], "scene")) {
+            shell_gfx_scene_command(line, last_status, 2);
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "test")) {
+            shell_gfx_scene_command(line, last_status, 1);
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "desktop")) {
+            shell_gfx_scene_command(line, last_status, 1);
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "console")) {
             framebuffer_demo_console();
             terminal_write("gfx: drew graphical console mockup into framebuffer stub\n");
             *last_status = 0;
-        } else if (line->count > 2 && string_equals(line->args[1], "console")) {
+        } else if (line->count > 2 && string_equals_ci(line->args[1], "console")) {
             char text[128];
             shell_join_args(line, 2, text, sizeof(text));
             framebuffer_console_write(text);
             framebuffer_console_write("\n");
             terminal_write("gfx: wrote line into graphical console buffer\n");
             *last_status = 0;
-        } else if (line->count >= 2 && string_equals(line->args[1], "mirror")) {
-            if (line->count == 2 || (line->count == 3 && string_equals(line->args[2], "status"))) {
+        } else if (line->count >= 2 && string_equals_ci(line->args[1], "shell")) {
+            shell_gfx_shell_command(line, last_status, 2);
+        } else if (line->count >= 2 && string_equals_ci(line->args[1], "mirror")) {
+            if (line->count == 2 || (line->count == 3 && string_equals_ci(line->args[2], "status"))) {
                 terminal_write("gfx: mirror ");
                 terminal_write(terminal_graphics_mirror_enabled() ? "on\n" : "off\n");
                 *last_status = 0;
-            } else if (line->count == 3 && string_equals(line->args[2], "on")) {
-                framebuffer_console_reset();
-                terminal_set_graphics_mirror(1);
-                terminal_write("gfx: mirror on\n");
-                *last_status = 0;
-            } else if (line->count == 3 && string_equals(line->args[2], "off")) {
-                terminal_set_graphics_mirror(0);
-                terminal_write("gfx: mirror off\n");
-                *last_status = 0;
-            } else if (line->count == 3 && string_equals(line->args[2], "clear")) {
-                int mirror_was_enabled = terminal_graphics_mirror_enabled();
-                framebuffer_console_reset();
-                if (mirror_was_enabled) {
-                    terminal_set_graphics_mirror(0);
-                }
-                terminal_write("gfx: mirror console cleared\n");
-                if (mirror_was_enabled) {
-                    terminal_set_graphics_mirror(1);
-                }
-                *last_status = 0;
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "on")) {
+                shell_gfx_shell_command(line, last_status, 2);
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "off")) {
+                shell_gfx_shell_command(line, last_status, 2);
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "clear")) {
+                shell_gfx_shell_command(line, last_status, 2);
             } else {
                 shell_gfx_usage();
                 *last_status = 1;
             }
-        } else if (line->count == 2 && string_equals(line->args[1], "preview")) {
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "preview")) {
             terminal_ensure_rows(28);
             framebuffer_print_preview();
             *last_status = 0;
-        } else if (line->count == 2 && string_equals(line->args[1], "clear")) {
-            framebuffer_clear(0x00000000);
-            shell_gfx_restore_console_overlay();
-            terminal_write("gfx: framebuffer cleared\n");
-            *last_status = 0;
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "clear")) {
+            shell_gfx_scene_command(line, last_status, 1);
         } else {
             shell_gfx_usage();
             *last_status = 1;
