@@ -9,42 +9,13 @@
 #define USER_FILE_FD_BASE 3
 #define WRITE_BUF_MAX 1024
 #define USER_STRING_MAX 128
-#define USER_STACK_REGION_BASE 0x02000000
-#define USER_STACK_REGION_LIMIT 0x02100000
-#define USER_KAPP_REGION_BASE 0x03000000
-#define USER_KAPP_REGION_LIMIT 0x03100000
-
-extern uint8_t user_image_start;
-extern uint8_t user_image_end;
-
-static int range_contains(uint32_t start, uint32_t end, uint32_t address, uint32_t length) {
-    if (length == 0) {
-        return 1;
-    }
-
-    if (address + length < address) {
-        return 0;
-    }
-
-    return address >= start && address + length <= end;
-}
 
 static int user_range_is_valid(const void* pointer, uint32_t length) {
-    uint32_t address = (uint32_t)pointer;
-
     if (pointer == 0) {
         return 0;
     }
 
-    if (range_contains((uint32_t)&user_image_start, (uint32_t)&user_image_end, address, length)) {
-        return 1;
-    }
-
-    if (range_contains(USER_KAPP_REGION_BASE, USER_KAPP_REGION_LIMIT, address, length)) {
-        return 1;
-    }
-
-    return range_contains(USER_STACK_REGION_BASE, USER_STACK_REGION_LIMIT, address, length);
+    return task_current_user_range_is_valid((uint32_t)pointer, length);
 }
 
 static int user_string_is_valid(const char* text) {

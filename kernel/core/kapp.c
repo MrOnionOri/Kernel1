@@ -171,7 +171,7 @@ static int kapp_load(const char* path, struct kapp_metadata* metadata) {
     return kapp_parse_data(kapp_file_buffer, file_size, metadata);
 }
 
-static int map_user_stack(uint32_t stack_top) {
+static int map_user_stack(uint32_t page_directory, uint32_t stack_top) {
     uint32_t stack_base = stack_top - USER_STACK_STRIDE;
 
     for (uint32_t offset = 0; offset < USER_STACK_STRIDE; offset += PAGE_SIZE) {
@@ -181,7 +181,9 @@ static int map_user_stack(uint32_t stack_top) {
             return 0;
         }
 
-        if (!arch_map_page(stack_base + offset, physical,
+        arch_zero_physical_page(physical);
+
+        if (!arch_map_address_space_page(page_directory, stack_base + offset, physical,
                 ARCH_PAGE_WRITABLE | ARCH_PAGE_USER)) {
             return 0;
         }
@@ -242,33 +244,6 @@ struct task* kapp_spawn_path(const char* path, const char* args) {
     uint32_t stack_top = USER_STACK_BASE + (task_id * USER_STACK_STRIDE);
     uint32_t pages = (metadata.image_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    if (!map_user_stack(stack_top)) {
-        terminal_write("kapp spawn failed: stack map failed\n");
-        return 0;
-    }
-
-    for (uint32_t page = 0; page < pages; page++) {
-        uint32_t physical = pmm_alloc_page();
-
-        if (physical == 0) {
-            terminal_write("kapp spawn failed: no memory\n");
-            return 0;
-        }
-
-        if (!arch_map_page(load_base + (page * PAGE_SIZE), physical,
-                ARCH_PAGE_WRITABLE | ARCH_PAGE_USER)) {
-            terminal_write("kapp spawn failed: map failed\n");
-            return 0;
-        }
-    }
-
-    const char* payload = kapp_file_buffer + metadata.header_size;
-    char* destination = (char*)load_base;
-
-    for (uint32_t i = 0; i < metadata.image_size; i++) {
-        destination[i] = payload[i];
-    }
-
     struct task* task = task_create_user_with_args(task_name,
         load_base + metadata.entry_offset, stack_top, args);
 
@@ -276,6 +251,41 @@ struct task* kapp_spawn_path(const char* path, const char* args) {
         terminal_write("kapp spawn failed: task slot\n");
         return 0;
     }
+
+    if (!map_user_stack(task->page_directory, stack_top)) {
+        terminal_write("kapp spawn failed: stack map failed\n");
+        task_kill(task->id, 1);
+        return 0;
+    }
+
+    const char* payload = kapp_file_buffer + metadata.header_size;
+
+    for (uint32_t page = 0; page < pages; page++) {
+        uint32_t physical = pmm_alloc_page();
+
+        if (physical == 0) {
+            terminal_write("kapp spawn failed: no memory\n");
+            task_kill(task->id, 1);
+            return 0;
+        }
+
+        arch_zero_physical_page(physical);
+
+        uint32_t page_offset = page * PAGE_SIZE;
+        uint32_t remaining = metadata.image_size - page_offset;
+        uint32_t bytes = remaining > PAGE_SIZE ? PAGE_SIZE : remaining;
+        arch_copy_to_physical(physical, payload + page_offset, bytes);
+
+        if (!arch_map_address_space_page(task->page_directory, load_base + page_offset, physical,
+                ARCH_PAGE_WRITABLE | ARCH_PAGE_USER)) {
+            terminal_write("kapp spawn failed: map failed\n");
+            task_kill(task->id, 1);
+            return 0;
+        }
+    }
+
+    task_set_user_memory(task, load_base, load_base + metadata.image_size,
+        stack_top - USER_STACK_STRIDE, stack_top);
 
     terminal_write("Spawned ");
     terminal_write(task_name);

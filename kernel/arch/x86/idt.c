@@ -117,6 +117,8 @@ void idt_initialize(void) {
 }
 
 static void exception_handler(struct interrupt_frame* frame) {
+    uint32_t fault_address = 0;
+
     terminal_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     terminal_write("\nCPU exception: ");
 
@@ -135,10 +137,17 @@ static void exception_handler(struct interrupt_frame* frame) {
     terminal_write_hex(frame->eip);
 
     if (frame->int_no == 14) {
-        uint32_t fault_address;
         __asm__ volatile("mov %%cr2, %0" : "=r"(fault_address));
         terminal_write("  CR2: ");
         terminal_write_hex(fault_address);
+    }
+
+    if ((frame->cs & 0x3) == 0x3 && task_current_id() != 0) {
+        terminal_write("\nKilling user task ");
+        terminal_write_dec(task_current_id());
+        terminal_write(" after exception.\n");
+        terminal_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        task_prepare_exit_return(frame, 128 + frame->int_no);
     }
 
     terminal_write("\nSystem halted.\n");

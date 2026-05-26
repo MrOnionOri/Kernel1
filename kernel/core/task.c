@@ -136,6 +136,18 @@ static void task_print_context_details(const struct task* task) {
     terminal_write("\n");
 }
 
+static int task_range_contains(uint32_t start, uint32_t end, uint32_t address, uint32_t length) {
+    if (length == 0) {
+        return 1;
+    }
+
+    if (start >= end || address + length < address) {
+        return 0;
+    }
+
+    return address >= start && address + length <= end;
+}
+
 static void task_clear_context(struct task* task) {
     task->context.eax = 0;
     task->context.ebx = 0;
@@ -205,10 +217,18 @@ static struct task* scheduler_pick_next_ready(void) {
 static void task_clear_slot(struct task* task) {
     uint32_t reusable_kernel_stack_top = task->kernel_stack_top;
 
+    if (task->page_directory != 0) {
+        arch_free_address_space(task->page_directory);
+    }
+
     task->id = 0;
     task->name[0] = '\0';
     task->state = TASK_UNUSED;
+    task->page_directory = 0;
     task->entry = 0;
+    task->user_image_base = 0;
+    task->user_image_limit = 0;
+    task->user_stack_base = 0;
     task->user_stack_top = 0;
     task->kernel_stack_top = reusable_kernel_stack_top;
     task->exit_code = 0;
@@ -298,13 +318,13 @@ int scheduler_preempt_if_needed(struct interrupt_frame* frame) {
 
     task_save_context(current_task, frame);
     current_task->entry = frame->eip;
-    current_task->user_stack_top = frame->useresp;
     current_task->state = TASK_READY;
     current_task->preemptions++;
 
     next->state = TASK_RUNNING;
     current_task = next;
     arch_set_kernel_stack(next->kernel_stack_top);
+    arch_switch_address_space(next->page_directory);
     task_load_context_into_frame(next, frame);
     scheduler_auto_steps++;
     scheduler_preemptions++;
@@ -405,10 +425,19 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
                 tasks[i].kernel_stack_top = (uint32_t)kernel_stack + TASK_KERNEL_STACK_SIZE;
             }
 
+            uint32_t page_directory = arch_create_address_space();
+            if (page_directory == 0) {
+                return 0;
+            }
+
             tasks[i].id = next_task_id++;
             string_copy(tasks[i].name, name == 0 ? "user" : name, sizeof(tasks[i].name));
             tasks[i].state = TASK_READY;
+            tasks[i].page_directory = page_directory;
             tasks[i].entry = entry;
+            tasks[i].user_image_base = 0;
+            tasks[i].user_image_limit = 0;
+            tasks[i].user_stack_base = 0;
             tasks[i].user_stack_top = user_stack_top;
             tasks[i].exit_code = 0;
             tasks[i].yields = 0;
@@ -432,6 +461,32 @@ struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32
     return 0;
 }
 
+void task_set_user_memory(struct task* task, uint32_t image_base, uint32_t image_limit,
+        uint32_t stack_base, uint32_t stack_top) {
+    if (task == 0) {
+        return;
+    }
+
+    task->user_image_base = image_base;
+    task->user_image_limit = image_limit;
+    task->user_stack_base = stack_base;
+    task->user_stack_top = stack_top;
+}
+
+int task_current_user_range_is_valid(uint32_t address, uint32_t length) {
+    if (current_task == 0) {
+        return 0;
+    }
+
+    if (task_range_contains(current_task->user_image_base, current_task->user_image_limit,
+            address, length)) {
+        return 1;
+    }
+
+    return task_range_contains(current_task->user_stack_base, current_task->user_stack_top,
+        address, length);
+}
+
 struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t user_stack_top) {
     return task_create_user_with_args(name, entry, user_stack_top, "");
 }
@@ -446,6 +501,7 @@ static void task_run_internal(struct task* task, int print_shell_return) {
 
     if (context_save(&scheduler_context) == 0) {
         arch_set_kernel_stack(task->kernel_stack_top);
+        arch_switch_address_space(task->page_directory);
         if (task->context.valid) {
             arch_enter_user_context(&task->context);
         } else {
@@ -454,6 +510,7 @@ static void task_run_internal(struct task* task, int print_shell_return) {
     }
 
     struct task* returned_task = current_task;
+    arch_switch_address_space(0);
 
     terminal_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     terminal_write(print_shell_return ? "Back in kernel shell. Task " : "Task ");
@@ -597,7 +654,6 @@ void task_yield_current(struct interrupt_frame* frame) {
     if (current_task != 0) {
         task_save_context(current_task, frame);
         current_task->entry = frame->eip;
-        current_task->user_stack_top = frame->useresp;
         current_task->state = TASK_READY;
         current_task->yields++;
         if (current_scheduler_mode == SCHEDULER_AUTO) {
@@ -634,8 +690,14 @@ void task_print_all(void) {
         terminal_write(tasks[i].name);
         terminal_write(" ");
         terminal_write(task_state_name(tasks[i].state));
+        terminal_write(" pd=");
+        terminal_write_hex(tasks[i].page_directory);
         terminal_write(" ustack=");
         terminal_write_hex(tasks[i].user_stack_top);
+        terminal_write(" img=");
+        terminal_write_hex(tasks[i].user_image_base);
+        terminal_write("-");
+        terminal_write_hex(tasks[i].user_image_limit);
         terminal_write(" exit=");
         terminal_write_dec(tasks[i].exit_code);
         terminal_write(" y=");
@@ -662,10 +724,20 @@ void task_print_all_verbose(void) {
         terminal_write(tasks[i].name);
         terminal_write(" state=");
         terminal_write(task_state_name(tasks[i].state));
+        terminal_write(" pd=");
+        terminal_write_hex(tasks[i].page_directory);
         terminal_write("\n    entry=");
         terminal_write_hex(tasks[i].entry);
         terminal_write(" ustack=");
         terminal_write_hex(tasks[i].user_stack_top);
+        terminal_write(" stack=");
+        terminal_write_hex(tasks[i].user_stack_base);
+        terminal_write("-");
+        terminal_write_hex(tasks[i].user_stack_top);
+        terminal_write("\n    image=");
+        terminal_write_hex(tasks[i].user_image_base);
+        terminal_write("-");
+        terminal_write_hex(tasks[i].user_image_limit);
         terminal_write("\n    kstack=");
         terminal_write_hex(tasks[i].kernel_stack_top);
         terminal_write(" exit=");
@@ -699,12 +771,22 @@ int task_print_context(uint32_t id) {
     terminal_write(task->name);
     terminal_write(" state=");
     terminal_write(task_state_name(task->state));
+    terminal_write(" pd=");
+    terminal_write_hex(task->page_directory);
     terminal_write("\n  entry=");
     terminal_write_hex(task->entry);
     terminal_write(" ustack=");
     terminal_write_hex(task->user_stack_top);
+    terminal_write(" stack=");
+    terminal_write_hex(task->user_stack_base);
+    terminal_write("-");
+    terminal_write_hex(task->user_stack_top);
     terminal_write(" kstack=");
     terminal_write_hex(task->kernel_stack_top);
+    terminal_write("\n  image=");
+    terminal_write_hex(task->user_image_base);
+    terminal_write("-");
+    terminal_write_hex(task->user_image_limit);
     terminal_write("\n  yields=");
     terminal_write_dec(task->yields);
     terminal_write(" preempts=");

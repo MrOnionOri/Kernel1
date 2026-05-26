@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 234
+$KernelSectors = 260
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
@@ -125,8 +125,9 @@ $loggerKapp = New-Kapp "logger" $loggerPayload ((1 -shl 2) -bor (1 -shl 7) -bor 
 Add-Record "apps/demo.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
 Add-Record "apps/busy.txt" ([System.Text.Encoding]::ASCII.GetBytes("busy is a built-in no-yield scheduler stress app.`n"))
 Add-Record "apps/clock.txt" ([System.Text.Encoding]::ASCII.GetBytes("clock is currently linked into the kernel image.`nNext: load this app from initrd.`n"))
+Add-Record "apps/probe.txt" ([System.Text.Encoding]::ASCII.GetBytes("probe intentionally touches unmapped user memory to test isolation.`n"))
 Add-Record "apps/reader.txt" ([System.Text.Encoding]::ASCII.GetBytes("reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.`n"))
-Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app with SYS_YIELD`nbusy|built-in|No-yield scheduler stress app`nclock|built-in|Shows PID and ticks`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to a log file`n"))
+Add-Record "apps/manifest.txt" ([System.Text.Encoding]::ASCII.GetBytes("demo|built-in|Demo ring3 app with SYS_YIELD`nbusy|built-in|No-yield scheduler stress app`nclock|built-in|Shows PID and ticks`nprobe|built-in|Faults on unmapped user memory`nreader|built-in|Reads files through VFS syscalls`nhello|kapp|Hello from initrd`necho|kapp|Prints arguments`nlogger|kapp|Appends args to a log file`n"))
 Add-Record "apps/hello.kapp" $helloKapp
 Add-Record "apps/echo.kapp" $echoKapp
 Add-Record "apps/logger.kapp" $loggerKapp

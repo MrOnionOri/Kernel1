@@ -10,7 +10,7 @@ behind small arch, driver, VFS, task, and app interfaces.
 - `boot`: BIOS boot sector. It loads the protected-mode kernel image and the
   initrd area into memory.
 - `kernel/arch/x86`: x86 platform code: entry, GDT/TSS, IDT/ISR, PIC, paging,
-  I/O ports, and user-mode switching.
+  per-task page directories, I/O ports, and user-mode switching.
 - `kernel/core`: portable kernel logic: boot flow after arch setup, shell,
   app registry, KAPP loader, initrd, syscalls, tasks, user-mode orchestration,
   and VFS.
@@ -33,9 +33,10 @@ behind small arch, driver, VFS, task, and app interfaces.
 5. The interactive shell becomes the main control surface.
 
 The build scripts reserve fixed disk-image space for the kernel and initrd. If
-the kernel image grows, the sector constants in `build.sh`, `build.ps1`,
-`boot/boot.asm`, and the initrd load address in `kernel/core/initrd.c` must stay
-in sync.
+the kernel image grows, the sector constants in `build.sh`, `build.ps1`, and the
+initrd load address in `kernel/core/initrd.c` must stay in sync. The boot sector
+loads the reserved kernel area plus the initrd sectors, so its `KERNEL_SECTORS`
+constant is currently `kernel sectors + initrd sectors`.
 
 ## Portability Rule
 
@@ -209,8 +210,9 @@ Tasks track:
 
 - id and name;
 - state: unused, ready, running, exited;
+- process page directory physical address (`cr3`);
 - entry address;
-- user stack and kernel stack;
+- user image range, user stack range, and kernel stack;
 - exit code, yield count, and preemption count;
 - command-line args;
 - per-task file descriptors.
@@ -268,8 +270,14 @@ Current syscalls:
 16 SYS_MKDIR      ebx=path                      returns 0 or -1
 ```
 
-The syscall layer validates user pointers against the `.user` image and user
-stack ranges before reading or writing buffers.
+The syscall layer validates user pointers against the current task's own user
+image range and stack range before reading or writing buffers. This keeps one
+task from passing another task's stack or KAPP image pointer through syscalls.
+
+User tasks now get their own x86 page directory. Kernel supervisor mappings are
+shared into each directory, while user image and stack pages are mapped only in
+that task's directory. Context switches load the task directory before returning
+to ring 3 and restore the kernel directory after returning to the shell.
 
 ## Current State
 
@@ -283,9 +291,11 @@ Working pieces:
   redirection, conditionals, loops, and scripts.
 - VFS over initrd, RAM files, and the `/disk` KFS mount.
 - Built-in user apps, including `demo` with `SYS_YIELD` and `busy` without
-  yield, plus KAPP apps.
+  yield, plus `probe` for memory-isolation fault tests and KAPP apps.
 - Basic task table and foreground/background execution flow with wait, kill,
   reap, task summaries, and saved context snapshots.
+- Per-task page directories plus user memory metadata used by syscall pointer
+  validation.
 
 ## Next Work
 

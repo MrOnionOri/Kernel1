@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-KERNEL_SECTORS=234
+KERNEL_SECTORS=260
 KERNEL_BYTES=$((KERNEL_SECTORS * 512))
 INITRD_SECTORS=16
 INITRD_BYTES=$((INITRD_SECTORS * 512))
@@ -138,8 +138,9 @@ printf 'K1RD2\0' > "$BUILD_DIR/initrd.bin"
 printf 'demo is currently linked into the kernel image.\nNext: load this app from initrd.\n' > "$BUILD_DIR/demo.txt"
 printf 'busy is a built-in no-yield scheduler stress app.\n' > "$BUILD_DIR/busy.txt"
 printf 'clock is currently linked into the kernel image.\nNext: load this app from initrd.\n' > "$BUILD_DIR/clock.txt"
+printf 'probe intentionally touches unmapped user memory to test isolation.\n' > "$BUILD_DIR/probe.txt"
 printf 'reader opens files through SYS_OPEN/SYS_READ/SYS_CLOSE.\n' > "$BUILD_DIR/reader.txt"
-printf 'demo|built-in|Demo ring3 app with SYS_YIELD\nbusy|built-in|No-yield scheduler stress app\nclock|built-in|Shows PID and ticks\nreader|built-in|Reads files through VFS syscalls\nhello|kapp|Hello from initrd\necho|kapp|Prints arguments\nlogger|kapp|Appends args to a log file\n' > "$BUILD_DIR/manifest.txt"
+printf 'demo|built-in|Demo ring3 app with SYS_YIELD\nbusy|built-in|No-yield scheduler stress app\nclock|built-in|Shows PID and ticks\nprobe|built-in|Faults on unmapped user memory\nreader|built-in|Reads files through VFS syscalls\nhello|kapp|Hello from initrd\necho|kapp|Prints arguments\nlogger|kapp|Appends args to a log file\n' > "$BUILD_DIR/manifest.txt"
 printf 'Kernel1 initrd v2: name + u32 size + binary-safe data records.\n' > "$BUILD_DIR/readme.txt"
 printf 'KAPP v1: magic KAPP, u32 header size, entry offset, image size, flags, version, required syscall mask, 32-byte app name, reserved, payload. KAPP v0 headers are still accepted.\n' > "$BUILD_DIR/kapp.txt"
 write_kapp "$BUILD_DIR/hello.kapp" "$BUILD_DIR/hello.payload" "hello" $(((1 << 2) | (1 << 7)))
@@ -149,6 +150,7 @@ write_kapp "$BUILD_DIR/logger.kapp" "$BUILD_DIR/logger.payload" "logger" $(((1 <
 append_record "apps/demo.txt" "$BUILD_DIR/demo.txt"
 append_record "apps/busy.txt" "$BUILD_DIR/busy.txt"
 append_record "apps/clock.txt" "$BUILD_DIR/clock.txt"
+append_record "apps/probe.txt" "$BUILD_DIR/probe.txt"
 append_record "apps/reader.txt" "$BUILD_DIR/reader.txt"
 append_record "apps/manifest.txt" "$BUILD_DIR/manifest.txt"
 append_record "apps/hello.kapp" "$BUILD_DIR/hello.kapp"

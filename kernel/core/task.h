@@ -41,7 +41,11 @@ struct task {
     uint32_t id;
     char name[TASK_NAME_SIZE];
     enum task_state state;
+    uint32_t page_directory;
     uint32_t entry;
+    uint32_t user_image_base;
+    uint32_t user_image_limit;
+    uint32_t user_stack_base;
     uint32_t user_stack_top;
     uint32_t kernel_stack_top;
     uint32_t exit_code;
@@ -71,6 +75,9 @@ int task_current_close_file(uint32_t task_fd);
 struct task* task_create_user(uint32_t entry, uint32_t user_stack_top);
 struct task* task_create_user_named(const char* name, uint32_t entry, uint32_t user_stack_top);
 struct task* task_create_user_with_args(const char* name, uint32_t entry, uint32_t user_stack_top, const char* args);
+void task_set_user_memory(struct task* task, uint32_t image_base, uint32_t image_limit,
+    uint32_t stack_base, uint32_t stack_top);
+int task_current_user_range_is_valid(uint32_t address, uint32_t length);
 void task_run(struct task* task);
 void task_run_all_ready(void);
 uint32_t task_run_all_ready_until_idle(void);
