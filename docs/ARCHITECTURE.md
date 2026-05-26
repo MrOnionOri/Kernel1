@@ -189,16 +189,42 @@ The visual branch starts with a portable framebuffer API in
 framebuffer_available();
 framebuffer_clear(color);
 framebuffer_put_pixel(x, y, color);
+framebuffer_draw_line(x0, y0, x1, y1, color);
 framebuffer_fill_rect(x, y, width, height, color);
+framebuffer_draw_rect(x, y, width, height, color);
+framebuffer_write_text(x, y, text, color);
 ```
 
-For now the framebuffer is a RAM-backed stub (`320x200x32`) so the shell and
-boot path stay stable while the drawing API takes shape. The shell command
-`gfx [info|test|desktop|preview|clear]` can inspect the mode, draw test/desktop
-mockups into that buffer, and print a downsampled ASCII preview while the real
-framebuffer is not wired yet. The next visual step is to replace the stub address with a BIOS VBE
-linear framebuffer captured during real-mode boot, then render text and mouse
-cursor pixels through this same API.
+The framebuffer uses a BIOS VBE linear framebuffer when the bootloader can
+activate mode `0x144` (`1024x768x32` on QEMU/Bochs VBE). If that path fails, it falls back to a
+RAM-backed stub (`320x200x32`) so the shell and boot path stay stable while the
+drawing API keeps working. The shell command
+`gfx [info|test|desktop|console [text]|mirror [on|off|status|clear]|preview|clear]`
+can inspect the mode, draw test/desktop/console mockups into that buffer,
+append lines to a small graphical console buffer, mirror normal shell output
+into that graphical console, and print a downsampled ASCII preview. The drawing
+helpers write through `address + y * pitch + x * 4`, so the same API targets
+either the hardware framebuffer or the fallback stub.
+
+The kernel now reserves a tiny boot handoff block at `0x8F00` for graphics
+metadata:
+
+```text
+u32 magic          "K1GF" when valid
+u32 address        physical linear framebuffer address
+u32 width
+u32 height
+u32 pitch
+u32 bits_per_pixel currently only 32 is accepted
+```
+
+`boot/boot.asm` clears this block, probes VBE mode `0x144`, then tries to switch
+to it with the linear framebuffer bit set. On success it writes the final
+`K1GF` magic and `framebuffer_initialize()` maps the reported physical
+framebuffer directly. On failure the block remains a probe/fallback record and
+the kernel uses the RAM stub. When hardware graphics are active, Kernel1 resets
+the graphical console and enables terminal mirroring automatically so the shell
+stays visible outside VGA text mode.
 
 ## Apps And KAPP
 

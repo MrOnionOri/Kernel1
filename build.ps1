@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 260
+$KernelSectors = 276
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
@@ -169,5 +169,5 @@ if (-not (Test-Path $DataImagePath)) {
 
 if ($Run) {
     Require-Command "qemu-system-i386"
-    qemu-system-i386 -drive if=ide,index=0,format=raw,file="$ImagePath" -drive if=ide,index=1,format=raw,file="$DataImagePath"
+    qemu-system-i386 -vga std -drive if=ide,index=0,format=raw,file="$ImagePath" -drive if=ide,index=1,format=raw,file="$DataImagePath"
 }

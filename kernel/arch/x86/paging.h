@@ -10,6 +10,7 @@
 void paging_initialize(void);
 int paging_is_enabled(void);
 int vmm_map_page(uint32_t virtual_address, uint32_t physical_address, uint32_t flags);
+int vmm_map_range(uint32_t virtual_address, uint32_t physical_address, uint32_t length, uint32_t flags);
 void vmm_unmap_page(uint32_t virtual_address);
 uint32_t vmm_get_physical(uint32_t virtual_address);
 uint32_t vmm_create_process_directory(void);

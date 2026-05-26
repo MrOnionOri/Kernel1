@@ -7,14 +7,18 @@
 
 KERNEL_OFFSET equ 0x10000
 KERNEL_LOAD_SEGMENT equ 0x1000
-KERNEL_SECTORS equ 276
+KERNEL_SECTORS equ 292
 KERNEL_READ_CHUNK equ 8
 MEMORY_MAP_ADDR equ 0x9000
 MEMORY_MAP_ENTRIES equ MEMORY_MAP_ADDR + 4
 MEMORY_MAP_MAX equ 16
+GRAPHICS_INFO_ADDR equ 0x8F00
+VBE_MODE_INFO_ADDR equ 0x8000
+VBE_PROBE_MODE equ 0x144
 
 start:
     cli
+    cld
     xor ax, ax
     mov ds, ax
     mov es, ax
@@ -23,12 +27,15 @@ start:
     sti
 
     mov [boot_drive], dl
+    call clear_graphics_info
+    call probe_vbe_mode
+    call activate_vbe_mode
 
+    cmp dword [GRAPHICS_INFO_ADDR], 0x4647314B
+    je .skip_text_mode
     call set_text_mode_80x50
 
-    mov si, msg_loading
-    call print_string
-
+.skip_text_mode:
     call get_memory_map
     call load_kernel
     call enter_protected_mode
@@ -36,23 +43,62 @@ start:
 hang:
     jmp hang
 
-print_string:
-    lodsb
-    test al, al
-    jz .done
-    mov ah, 0x0e
-    mov bh, 0x00
-    int 0x10
-    jmp print_string
-.done:
-    ret
-
 set_text_mode_80x50:
     mov ax, 0x0003
     int 0x10
     mov ax, 0x1112
     xor bx, bx
     int 0x10
+    ret
+
+clear_graphics_info:
+    mov di, GRAPHICS_INFO_ADDR
+    xor ax, ax
+    mov cx, 24
+    rep stosb
+    ret
+
+probe_vbe_mode:
+    push es
+    xor ax, ax
+    mov es, ax
+    mov ax, 0x4F01
+    mov cx, VBE_PROBE_MODE
+    mov di, VBE_MODE_INFO_ADDR
+    int 0x10
+    cmp ax, 0x004F
+    jne .done
+    mov bx, [VBE_MODE_INFO_ADDR]
+    test bx, 0x0080
+    jz .done
+    cmp byte [VBE_MODE_INFO_ADDR + 25], 32
+    jne .done
+    mov dword [GRAPHICS_INFO_ADDR], 0x5047314B
+    mov eax, [VBE_MODE_INFO_ADDR + 40]
+    mov [GRAPHICS_INFO_ADDR + 4], eax
+    xor eax, eax
+    mov ax, [VBE_MODE_INFO_ADDR + 18]
+    mov [GRAPHICS_INFO_ADDR + 8], eax
+    mov ax, [VBE_MODE_INFO_ADDR + 20]
+    mov [GRAPHICS_INFO_ADDR + 12], eax
+    mov ax, [VBE_MODE_INFO_ADDR + 16]
+    mov [GRAPHICS_INFO_ADDR + 16], eax
+    movzx eax, byte [VBE_MODE_INFO_ADDR + 25]
+    mov [GRAPHICS_INFO_ADDR + 20], eax
+.done:
+    pop es
+    ret
+
+activate_vbe_mode:
+    cmp dword [GRAPHICS_INFO_ADDR], 0x5047314B
+    jne .done
+    mov ax, 0x4F02
+    mov bx, VBE_PROBE_MODE | 0x4000
+    int 0x10
+    cmp ax, 0x004F
+    jne .done
+    mov dword [GRAPHICS_INFO_ADDR], 0x4647314B
+.done:
     ret
 
 load_kernel:
@@ -100,10 +146,6 @@ load_kernel:
     ret
 
 disk_error:
-    xor ax, ax
-    mov ds, ax
-    mov si, msg_disk_error
-    call print_string
     jmp hang
 
 get_memory_map:
@@ -195,8 +237,6 @@ CODE_SEG equ gdt_code - gdt_start
 DATA_SEG equ gdt_data - gdt_start
 
 boot_drive db 0
-msg_loading db 'Loading Kernel1...', 13, 10, 0
-msg_disk_error db 'Disk read error', 13, 10, 0
 
 disk_address_packet:
     db 0x10

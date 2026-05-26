@@ -40,6 +40,20 @@ int arch_map_page(uint32_t virtual_address, uint32_t physical_address, uint32_t 
     return vmm_map_page(virtual_address, physical_address, x86_flags);
 }
 
+int arch_map_range(uint32_t virtual_address, uint32_t physical_address, uint32_t length, uint32_t flags) {
+    uint32_t x86_flags = 0;
+
+    if (flags & ARCH_PAGE_WRITABLE) {
+        x86_flags |= VMM_PAGE_WRITABLE;
+    }
+
+    if (flags & ARCH_PAGE_USER) {
+        x86_flags |= VMM_PAGE_USER;
+    }
+
+    return vmm_map_range(virtual_address, physical_address, length, x86_flags);
+}
+
 uint32_t arch_get_physical(uint32_t virtual_address) {
     return vmm_get_physical(virtual_address);
 }

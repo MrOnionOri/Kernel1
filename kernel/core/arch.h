@@ -13,6 +13,7 @@ void arch_enable_interrupts(void);
 void arch_halt(void);
 void arch_enable_irq(uint8_t irq);
 int arch_map_page(uint32_t virtual_address, uint32_t physical_address, uint32_t flags);
+int arch_map_range(uint32_t virtual_address, uint32_t physical_address, uint32_t length, uint32_t flags);
 uint32_t arch_get_physical(uint32_t virtual_address);
 uint32_t arch_create_address_space(void);
 void arch_free_address_space(uint32_t directory_physical);

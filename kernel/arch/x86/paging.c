@@ -112,6 +112,27 @@ int vmm_map_page(uint32_t virtual_address, uint32_t physical_address, uint32_t f
     return 1;
 }
 
+int vmm_map_range(uint32_t virtual_address, uint32_t physical_address, uint32_t length, uint32_t flags) {
+    uint32_t virtual_page = virtual_address & 0xFFFFF000;
+    uint32_t physical_page = physical_address & 0xFFFFF000;
+    uint32_t end = (virtual_address + length + PAGE_SIZE - 1) & 0xFFFFF000;
+
+    if (length == 0) {
+        return 1;
+    }
+
+    while (virtual_page < end) {
+        if (!vmm_map_page(virtual_page, physical_page, flags)) {
+            return 0;
+        }
+
+        virtual_page += PAGE_SIZE;
+        physical_page += PAGE_SIZE;
+    }
+
+    return 1;
+}
+
 void vmm_unmap_page(uint32_t virtual_address) {
     virtual_address &= 0xFFFFF000;
 

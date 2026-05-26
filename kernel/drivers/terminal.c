@@ -1,5 +1,6 @@
 #include "terminal.h"
 
+#include "framebuffer.h"
 #include "io.h"
 
 #include <stddef.h>
@@ -13,6 +14,7 @@
 static size_t cursor_row;
 static size_t cursor_col;
 static uint8_t terminal_color;
+static int graphics_mirror_enabled;
 
 static void terminal_update_cursor(void) {
     uint16_t position = (uint16_t)(cursor_row * VGA_WIDTH + cursor_col);
@@ -92,6 +94,14 @@ void terminal_set_color(enum vga_color foreground, enum vga_color background) {
     terminal_color = vga_entry_color(foreground, background);
 }
 
+void terminal_set_graphics_mirror(int enabled) {
+    graphics_mirror_enabled = enabled ? 1 : 0;
+}
+
+int terminal_graphics_mirror_enabled(void) {
+    return graphics_mirror_enabled;
+}
+
 void terminal_ensure_rows(uint32_t rows) {
     if (rows >= VGA_HEIGHT) {
         rows = VGA_HEIGHT - 1;
@@ -103,6 +113,10 @@ void terminal_ensure_rows(uint32_t rows) {
 }
 
 void terminal_cursor_left(void) {
+    if (graphics_mirror_enabled) {
+        framebuffer_console_cursor_left();
+    }
+
     if (cursor_col == 0) {
         if (cursor_row == 0) {
             return;
@@ -118,6 +132,10 @@ void terminal_cursor_left(void) {
 }
 
 void terminal_cursor_right(void) {
+    if (graphics_mirror_enabled) {
+        framebuffer_console_cursor_right();
+    }
+
     cursor_col++;
 
     if (cursor_col >= VGA_WIDTH) {
@@ -133,6 +151,13 @@ void terminal_cursor_right(void) {
 }
 
 void terminal_putchar(char character) {
+    if (graphics_mirror_enabled) {
+        char text[2];
+        text[0] = character;
+        text[1] = '\0';
+        framebuffer_console_write(text);
+    }
+
     if (character == '\n') {
         cursor_col = 0;
         cursor_row++;
@@ -155,6 +180,10 @@ void terminal_putchar(char character) {
 }
 
 void terminal_backspace(void) {
+    if (graphics_mirror_enabled) {
+        framebuffer_console_backspace();
+    }
+
     if (cursor_col == 0) {
         if (cursor_row == 0) {
             return;

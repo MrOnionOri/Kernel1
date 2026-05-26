@@ -21,6 +21,11 @@ void kernel_main(void) {
     pmm_initialize();
     heap_initialize();
     framebuffer_initialize();
+    if (framebuffer_get_info()->hardware_backed) {
+        framebuffer_console_reset();
+        terminal_set_graphics_mirror(1);
+        terminal_write("Kernel1 graphics console\n");
+    }
     task_initialize();
     arch_enable_irq(0);
     arch_enable_irq(1);

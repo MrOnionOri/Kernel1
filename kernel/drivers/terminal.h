@@ -24,6 +24,8 @@ enum vga_color {
 
 void terminal_initialize(void);
 void terminal_set_color(enum vga_color foreground, enum vga_color background);
+void terminal_set_graphics_mirror(int enabled);
+int terminal_graphics_mirror_enabled(void);
 void terminal_ensure_rows(uint32_t rows);
 void terminal_cursor_left(void);
 void terminal_cursor_right(void);

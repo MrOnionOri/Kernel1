@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-KERNEL_SECTORS=260
+KERNEL_SECTORS=276
 KERNEL_BYTES=$((KERNEL_SECTORS * 512))
 INITRD_SECTORS=16
 INITRD_BYTES=$((INITRD_SECTORS * 512))
@@ -202,6 +202,7 @@ fi
 if [[ "$RUN" -eq 1 ]]; then
     require_command qemu-system-i386
     qemu-system-i386 \
+        -vga std \
         -drive if=ide,index=0,format=raw,file="$IMAGE_PATH" \
         -drive if=ide,index=1,format=raw,file="$DATA_IMAGE_PATH"
 fi
