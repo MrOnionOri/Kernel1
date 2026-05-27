@@ -5,6 +5,7 @@
 #include "mouse.h"
 #include "pmm.h"
 #include "shell.h"
+#include "shell_system.h"
 #include "task.h"
 #include "terminal.h"
 
@@ -46,6 +47,7 @@ void kernel_main(void) {
 
     for (;;) {
         shell_poll();
+        shell_system_tick();
         arch_halt();
     }
 }

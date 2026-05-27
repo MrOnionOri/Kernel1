@@ -36,9 +36,9 @@ behind small arch, driver, VFS, task, and app interfaces.
 The build scripts reserve fixed disk-image space for the kernel and initrd. If
 the kernel image grows, the sector constants in `build.sh`, `build.ps1`,
 `boot/boot.asm`, and the initrd load address in `kernel/core/initrd.c` must stay
-in sync. The image currently reserves 308 sectors for the kernel and 16 for the
-initrd; the boot sector loads both areas (`308 + 16 = 324`), and the kernel reads
-the initrd at `0x36800`.
+in sync. The image currently reserves 340 sectors for the kernel and 16 for the
+initrd; the boot sector loads both areas (`340 + 16 = 356`), and the kernel reads
+the initrd at `0x3A800`.
 
 ## Portability Rule
 
@@ -200,7 +200,7 @@ The framebuffer uses a BIOS VBE linear framebuffer when the bootloader can
 activate mode `0x144` (`1024x768x32` on QEMU/Bochs VBE). If that path fails, it falls back to a
 RAM-backed stub (`320x200x32`) so the shell and boot path stay stable while the
 drawing API keeps working. The shell command
-`gfx [info|status|files [path]|apps|storage|launcher|dashboard [compact|full]|auto <on|off|status|compact|full> [compact|full]|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]`
+`gfx [info|status|files [path]|apps|storage|launcher|dashboard [compact|full]|auto <on|off|status|compact|full> [compact|full]|cursor [on|off|status|center]|click|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]`
 can inspect the mode, draw test/desktop/console mockups into that buffer,
 append lines to a small graphical console buffer, mirror normal shell output
 into that graphical console, and print a downsampled ASCII preview. The drawing

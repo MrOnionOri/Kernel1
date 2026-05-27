@@ -20,6 +20,34 @@
 
 static int gfx_auto_dashboard;
 static int gfx_dashboard_compact = 1;
+static int gfx_cursor_enabled;
+static int gfx_cursor_initialized;
+static int gfx_cursor_x;
+static int gfx_cursor_y;
+static int gfx_cursor_last_mouse_x;
+static int gfx_cursor_last_mouse_y;
+static uint32_t gfx_cursor_last_left_clicks;
+static uint32_t gfx_cursor_last_right_clicks;
+static uint32_t gfx_cursor_last_middle_clicks;
+static uint32_t gfx_cursor_last_draw_packets;
+static uint8_t gfx_cursor_last_draw_buttons;
+
+enum shell_gfx_target {
+    SHELL_GFX_TARGET_DESKTOP = 0,
+    SHELL_GFX_TARGET_STATUS,
+    SHELL_GFX_TARGET_TASKS,
+    SHELL_GFX_TARGET_DISK,
+    SHELL_GFX_TARGET_FILES,
+    SHELL_GFX_TARGET_APPS,
+    SHELL_GFX_TARGET_LAUNCHER,
+    SHELL_GFX_TARGET_LAUNCHER_RUN_DEMO,
+    SHELL_GFX_TARGET_LAUNCHER_RUN_CLOCK,
+    SHELL_GFX_TARGET_LAUNCHER_FILES_DISK,
+    SHELL_GFX_TARGET_LAUNCHER_APPS,
+    SHELL_GFX_TARGET_LAUNCHER_GFX_AUTO,
+    SHELL_GFX_TARGET_LAUNCHER_STATUS,
+    SHELL_GFX_TARGET_STUB,
+};
 
 static int string_equals(const char* left, const char* right) {
     size_t index = 0;
@@ -81,7 +109,7 @@ static uint32_t string_to_uint(const char* text, int* ok) {
 }
 
 static void shell_gfx_usage(void) {
-    terminal_write("gfx: usage gfx [info|status|files [path]|apps|storage|launcher|dashboard [compact|full]|auto <on|off|status|compact|full> [compact|full]|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]\n");
+    terminal_write("gfx: usage gfx [info|status|files [path]|apps|storage|launcher|dashboard [compact|full]|auto <on|off|status|compact|full> [compact|full]|cursor [on|off|status|center]|click|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]\n");
 }
 
 static void shell_gfx_restore_console_overlay(void) {
@@ -138,6 +166,322 @@ static int shell_gfx_draw_files_panel_for_path(const char* path) {
     framebuffer_draw_files_panel(1, path, info.children,
         names[0], types[0], names[1], types[1], names[2], types[2]);
     return 1;
+}
+
+static void shell_gfx_center_cursor(void) {
+    const struct framebuffer_info* info = framebuffer_get_info();
+    const struct mouse_state* state = mouse_get_state();
+
+    gfx_cursor_x = (int)(info->width / 2);
+    gfx_cursor_y = (int)(info->height / 2);
+    gfx_cursor_last_mouse_x = state->x;
+    gfx_cursor_last_mouse_y = state->y;
+    gfx_cursor_initialized = 1;
+}
+
+static void shell_gfx_apply_cursor_delta(void) {
+    const struct framebuffer_info* info = framebuffer_get_info();
+    const struct mouse_state* state = mouse_get_state();
+    int max_x;
+    int max_y;
+
+    if (!gfx_cursor_initialized) {
+        shell_gfx_center_cursor();
+    }
+
+    gfx_cursor_x += state->x - gfx_cursor_last_mouse_x;
+    gfx_cursor_y += state->y - gfx_cursor_last_mouse_y;
+    gfx_cursor_last_mouse_x = state->x;
+    gfx_cursor_last_mouse_y = state->y;
+
+    max_x = info->width > 10 ? (int)info->width - 10 : 0;
+    max_y = info->height > 10 ? (int)info->height - 10 : 0;
+
+    if (gfx_cursor_x < 0) {
+        gfx_cursor_x = 0;
+    } else if (gfx_cursor_x > max_x) {
+        gfx_cursor_x = max_x;
+    }
+
+    if (gfx_cursor_y < 0) {
+        gfx_cursor_y = 0;
+    } else if (gfx_cursor_y > max_y) {
+        gfx_cursor_y = max_y;
+    }
+}
+
+static void shell_gfx_draw_cursor(void) {
+    const struct mouse_state* state = mouse_get_state();
+
+    if (!state->initialized || !framebuffer_available()) {
+        return;
+    }
+
+    shell_gfx_apply_cursor_delta();
+    framebuffer_draw_mouse_cursor((uint32_t)gfx_cursor_x, (uint32_t)gfx_cursor_y, state->buttons);
+    gfx_cursor_last_draw_packets = state->packets;
+    gfx_cursor_last_draw_buttons = state->buttons;
+}
+
+static int shell_gfx_cursor_needs_redraw(void) {
+    const struct mouse_state* state = mouse_get_state();
+
+    if (!state->initialized) {
+        return 0;
+    }
+
+    return state->packets != gfx_cursor_last_draw_packets ||
+        state->buttons != gfx_cursor_last_draw_buttons;
+}
+
+static void shell_gfx_print_cursor_status(void) {
+    const struct mouse_state* state = mouse_get_state();
+
+    terminal_write("gfx cursor: ");
+    terminal_write(gfx_cursor_enabled ? "on\n" : "off\n");
+    terminal_write("  x=");
+    terminal_write_dec((uint32_t)(gfx_cursor_x < 0 ? 0 : gfx_cursor_x));
+    terminal_write(" y=");
+    terminal_write_dec((uint32_t)(gfx_cursor_y < 0 ? 0 : gfx_cursor_y));
+    terminal_write(" buttons=");
+    terminal_write_dec(state->buttons);
+    terminal_write(" clicks L/R/M=");
+    terminal_write_dec(state->left_clicks);
+    terminal_write("/");
+    terminal_write_dec(state->right_clicks);
+    terminal_write("/");
+    terminal_write_dec(state->middle_clicks);
+    terminal_write("\n");
+}
+
+static int shell_gfx_point_in_rect(int x, int y, int rx, int ry, int width, int height) {
+    return x >= rx && y >= ry && x < rx + width && y < ry + height;
+}
+
+static enum shell_gfx_target shell_gfx_cursor_target(void) {
+    const struct framebuffer_info* info = framebuffer_get_info();
+    int x = gfx_cursor_x;
+    int y = gfx_cursor_y;
+
+    if (!info->hardware_backed) {
+        return SHELL_GFX_TARGET_STUB;
+    }
+
+    if (shell_gfx_point_in_rect(x, y, 360, 38, 290, 112)) {
+        return SHELL_GFX_TARGET_STATUS;
+    }
+
+    if (shell_gfx_point_in_rect(x, y, 680, 38, 230, 112)) {
+        return SHELL_GFX_TARGET_TASKS;
+    }
+
+    if (shell_gfx_point_in_rect(x, y, 680, 164, 230, 112)) {
+        return SHELL_GFX_TARGET_DISK;
+    }
+
+    if (shell_gfx_point_in_rect(x, y, 172, 48, 140, 118)) {
+        return SHELL_GFX_TARGET_FILES;
+    }
+
+    if (shell_gfx_point_in_rect(x, y, 360, 164, 290, 112)) {
+        return SHELL_GFX_TARGET_APPS;
+    }
+
+    if (shell_gfx_point_in_rect(x, y, 46, 194, 270, 108)) {
+        if (shell_gfx_point_in_rect(x, y, 58, 222, 112, 15)) {
+            return SHELL_GFX_TARGET_LAUNCHER_RUN_DEMO;
+        }
+        if (shell_gfx_point_in_rect(x, y, 184, 222, 112, 15)) {
+            return SHELL_GFX_TARGET_LAUNCHER_RUN_CLOCK;
+        }
+        if (shell_gfx_point_in_rect(x, y, 58, 244, 112, 15)) {
+            return SHELL_GFX_TARGET_LAUNCHER_FILES_DISK;
+        }
+        if (shell_gfx_point_in_rect(x, y, 184, 244, 112, 15)) {
+            return SHELL_GFX_TARGET_LAUNCHER_APPS;
+        }
+        if (shell_gfx_point_in_rect(x, y, 58, 266, 112, 15)) {
+            return SHELL_GFX_TARGET_LAUNCHER_GFX_AUTO;
+        }
+        if (shell_gfx_point_in_rect(x, y, 184, 266, 112, 15)) {
+            return SHELL_GFX_TARGET_LAUNCHER_STATUS;
+        }
+        return SHELL_GFX_TARGET_LAUNCHER;
+    }
+
+    return SHELL_GFX_TARGET_DESKTOP;
+}
+
+static const char* shell_gfx_target_name(enum shell_gfx_target target) {
+    switch (target) {
+        case SHELL_GFX_TARGET_STATUS: return "kernel status panel";
+        case SHELL_GFX_TARGET_TASKS: return "tasks panel";
+        case SHELL_GFX_TARGET_DISK: return "disk/kfs panel";
+        case SHELL_GFX_TARGET_FILES: return "files panel";
+        case SHELL_GFX_TARGET_APPS: return "apps panel";
+        case SHELL_GFX_TARGET_LAUNCHER: return "launcher panel";
+        case SHELL_GFX_TARGET_LAUNCHER_RUN_DEMO: return "launcher: run demo";
+        case SHELL_GFX_TARGET_LAUNCHER_RUN_CLOCK: return "launcher: run clock";
+        case SHELL_GFX_TARGET_LAUNCHER_FILES_DISK: return "launcher: files /disk";
+        case SHELL_GFX_TARGET_LAUNCHER_APPS: return "launcher: apps";
+        case SHELL_GFX_TARGET_LAUNCHER_GFX_AUTO: return "launcher: gfx auto";
+        case SHELL_GFX_TARGET_LAUNCHER_STATUS: return "launcher: status";
+        case SHELL_GFX_TARGET_STUB: return "stub framebuffer";
+        case SHELL_GFX_TARGET_DESKTOP:
+        default: return "desktop";
+    }
+}
+
+static int shell_gfx_spawn_app(const char* name) {
+    const struct app_descriptor* app = app_find(name);
+    struct task* task;
+
+    if (app == 0) {
+        terminal_write("gfx click: app not found: ");
+        terminal_write(name);
+        terminal_write("\n");
+        return 0;
+    }
+
+    task = user_mode_spawn_app_with_args(app->name, app->entry, "");
+    if (task == 0) {
+        terminal_write("gfx click: spawn failed: ");
+        terminal_write(name);
+        terminal_write("\n");
+        return 0;
+    }
+
+    terminal_write("gfx click: spawned ");
+    terminal_write(name);
+    terminal_write("\n");
+    return 1;
+}
+
+static int shell_gfx_activate_target(enum shell_gfx_target target) {
+    struct kfs_usage usage;
+
+    switch (target) {
+        case SHELL_GFX_TARGET_LAUNCHER_RUN_DEMO:
+            return shell_gfx_spawn_app("demo");
+        case SHELL_GFX_TARGET_LAUNCHER_RUN_CLOCK:
+            return shell_gfx_spawn_app("clock");
+        case SHELL_GFX_TARGET_LAUNCHER_FILES_DISK:
+            shell_gfx_draw_files_panel_for_path("disk");
+            shell_gfx_draw_cursor();
+            terminal_write("gfx click: opened /disk files panel\n");
+            return 1;
+        case SHELL_GFX_TARGET_LAUNCHER_APPS:
+            shell_gfx_draw_apps_panel();
+            shell_gfx_draw_cursor();
+            terminal_write("gfx click: opened apps panel\n");
+            return 1;
+        case SHELL_GFX_TARGET_LAUNCHER_GFX_AUTO:
+            gfx_auto_dashboard = !gfx_auto_dashboard;
+            terminal_write("gfx click: auto dashboard ");
+            terminal_write(gfx_auto_dashboard ? "on\n" : "off\n");
+            return 1;
+        case SHELL_GFX_TARGET_LAUNCHER_STATUS:
+        case SHELL_GFX_TARGET_STATUS:
+            framebuffer_draw_status_panel(timer_ticks(), pmm_used_pages(), pmm_free_pages(),
+                scheduler_mode_name(scheduler_get_mode()), scheduler_preemption_count());
+            shell_gfx_draw_cursor();
+            terminal_write("gfx click: refreshed status panel\n");
+            return 1;
+        case SHELL_GFX_TARGET_TASKS:
+            task_print_summary();
+            return 1;
+        case SHELL_GFX_TARGET_DISK:
+            if (kfs_get_usage(&usage)) {
+                framebuffer_draw_storage_panel(1, usage.used_sectors, usage.free_sectors,
+                    usage.used_data_sectors, usage.data_sectors - usage.used_data_sectors,
+                    usage.percent_used);
+            } else {
+                framebuffer_draw_storage_panel(0, 0, 0, 0, 0, 0);
+            }
+            shell_gfx_draw_cursor();
+            terminal_write("gfx click: refreshed disk panel\n");
+            return 1;
+        case SHELL_GFX_TARGET_FILES:
+            shell_gfx_draw_files_panel_for_path(shell_fs_current_directory());
+            shell_gfx_draw_cursor();
+            terminal_write("gfx click: refreshed files panel\n");
+            return 1;
+        case SHELL_GFX_TARGET_APPS:
+            app_print_all();
+            return 1;
+        default:
+            terminal_write("gfx click: no action for target\n");
+            return 0;
+    }
+}
+
+static int shell_gfx_target_has_click_action(enum shell_gfx_target target) {
+    switch (target) {
+        case SHELL_GFX_TARGET_STATUS:
+        case SHELL_GFX_TARGET_TASKS:
+        case SHELL_GFX_TARGET_DISK:
+        case SHELL_GFX_TARGET_FILES:
+        case SHELL_GFX_TARGET_APPS:
+        case SHELL_GFX_TARGET_LAUNCHER_RUN_DEMO:
+        case SHELL_GFX_TARGET_LAUNCHER_RUN_CLOCK:
+        case SHELL_GFX_TARGET_LAUNCHER_FILES_DISK:
+        case SHELL_GFX_TARGET_LAUNCHER_APPS:
+        case SHELL_GFX_TARGET_LAUNCHER_GFX_AUTO:
+        case SHELL_GFX_TARGET_LAUNCHER_STATUS:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static void shell_gfx_handle_live_clicks(void) {
+    const struct mouse_state* state = mouse_get_state();
+    enum shell_gfx_target target;
+
+    if (state->left_clicks == gfx_cursor_last_left_clicks) {
+        return;
+    }
+
+    target = shell_gfx_cursor_target();
+    gfx_cursor_last_left_clicks = state->left_clicks;
+
+    if (shell_gfx_target_has_click_action(target)) {
+        shell_gfx_activate_target(target);
+    }
+}
+
+static void shell_gfx_print_click_status(void) {
+    const struct mouse_state* state = mouse_get_state();
+    enum shell_gfx_target target;
+    uint32_t new_left = state->left_clicks - gfx_cursor_last_left_clicks;
+    uint32_t new_right = state->right_clicks - gfx_cursor_last_right_clicks;
+    uint32_t new_middle = state->middle_clicks - gfx_cursor_last_middle_clicks;
+
+    shell_gfx_apply_cursor_delta();
+    target = shell_gfx_cursor_target();
+    terminal_write("gfx click: ");
+    terminal_write(shell_gfx_target_name(target));
+    terminal_write("\n  x=");
+    terminal_write_dec((uint32_t)(gfx_cursor_x < 0 ? 0 : gfx_cursor_x));
+    terminal_write(" y=");
+    terminal_write_dec((uint32_t)(gfx_cursor_y < 0 ? 0 : gfx_cursor_y));
+    terminal_write(" buttons=");
+    terminal_write_dec(state->buttons);
+    terminal_write(" new L/R/M=");
+    terminal_write_dec(new_left);
+    terminal_write("/");
+    terminal_write_dec(new_right);
+    terminal_write("/");
+    terminal_write_dec(new_middle);
+    terminal_write("\n");
+
+    if (new_left > 0) {
+        shell_gfx_activate_target(target);
+    }
+
+    gfx_cursor_last_left_clicks = state->left_clicks;
+    gfx_cursor_last_right_clicks = state->right_clicks;
+    gfx_cursor_last_middle_clicks = state->middle_clicks;
 }
 
 static void shell_gfx_draw_dashboard(void) {
@@ -205,8 +549,26 @@ static int shell_gfx_set_dashboard_layout(const char* layout) {
 
 void shell_system_after_command(void) {
     if (gfx_auto_dashboard && framebuffer_get_info()->hardware_backed) {
+        framebuffer_reset_mouse_cursor();
         shell_gfx_refresh_dashboard_panels();
     }
+
+    if (gfx_cursor_enabled && framebuffer_get_info()->hardware_backed) {
+        shell_gfx_draw_cursor();
+    }
+}
+
+void shell_system_tick(void) {
+    if (!gfx_cursor_enabled || !framebuffer_get_info()->hardware_backed) {
+        return;
+    }
+
+    if (!shell_gfx_cursor_needs_redraw()) {
+        return;
+    }
+
+    shell_gfx_draw_cursor();
+    shell_gfx_handle_live_clicks();
 }
 
 static int shell_gfx_scene_command(const struct shell_line* line, int* last_status, size_t command_index) {
@@ -441,6 +803,37 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
                 *last_status = 0;
             } else {
                 terminal_write("gfx auto: usage gfx auto <on|off|status|compact|full> [compact|full]\n");
+                *last_status = 1;
+            }
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "click")) {
+            shell_gfx_print_click_status();
+            shell_gfx_draw_cursor();
+            *last_status = 0;
+        } else if (line->count >= 2 && string_equals_ci(line->args[1], "cursor")) {
+            if (line->count == 2) {
+                shell_gfx_draw_cursor();
+                terminal_write("gfx: cursor drawn\n");
+                *last_status = 0;
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "on")) {
+                gfx_cursor_enabled = 1;
+                shell_gfx_draw_cursor();
+                terminal_write("gfx: cursor on\n");
+                *last_status = 0;
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "off")) {
+                gfx_cursor_enabled = 0;
+                framebuffer_erase_mouse_cursor();
+                terminal_write("gfx: cursor off\n");
+                *last_status = 0;
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "status")) {
+                shell_gfx_print_cursor_status();
+                *last_status = 0;
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "center")) {
+                shell_gfx_center_cursor();
+                shell_gfx_draw_cursor();
+                terminal_write("gfx: cursor centered\n");
+                *last_status = 0;
+            } else {
+                terminal_write("gfx cursor: usage gfx cursor [on|off|status|center]\n");
                 *last_status = 1;
             }
         } else if (line->count >= 2 && string_equals_ci(line->args[1], "scene")) {

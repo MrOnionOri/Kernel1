@@ -21,21 +21,6 @@
 #define PS2_MOUSE_SET_DEFAULTS 0xF6
 #define PS2_MOUSE_ENABLE_DATA 0xF4
 
-struct mouse_state {
-    int initialized;
-    int enabled;
-    int x;
-    int y;
-    int dx;
-    int dy;
-    uint8_t buttons;
-    uint8_t packet_index;
-    uint8_t packet[3];
-    uint32_t packets;
-    uint32_t bytes;
-    uint32_t bad_packets;
-};
-
 static struct mouse_state mouse;
 
 static int ps2_wait_input_clear(void) {
@@ -133,10 +118,14 @@ void mouse_initialize(void) {
     mouse.dx = 0;
     mouse.dy = 0;
     mouse.buttons = 0;
+    mouse.previous_buttons = 0;
     mouse.packet_index = 0;
     mouse.packets = 0;
     mouse.bytes = 0;
     mouse.bad_packets = 0;
+    mouse.left_clicks = 0;
+    mouse.right_clicks = 0;
+    mouse.middle_clicks = 0;
 
     ps2_flush_output();
     ps2_write_command(PS2_COMMAND_DISABLE_AUX);
@@ -198,8 +187,22 @@ void mouse_handle_irq(void) {
     mouse.dy = -(int)(int8_t)mouse.packet[2];
     mouse.x += mouse.dx;
     mouse.y += mouse.dy;
+    mouse.previous_buttons = mouse.buttons;
     mouse.buttons = mouse.packet[0] & 0x07;
+    if ((mouse.buttons & 0x01) && !(mouse.previous_buttons & 0x01)) {
+        mouse.left_clicks++;
+    }
+    if ((mouse.buttons & 0x02) && !(mouse.previous_buttons & 0x02)) {
+        mouse.right_clicks++;
+    }
+    if ((mouse.buttons & 0x04) && !(mouse.previous_buttons & 0x04)) {
+        mouse.middle_clicks++;
+    }
     mouse.packets++;
+}
+
+const struct mouse_state* mouse_get_state(void) {
+    return &mouse;
 }
 
 void mouse_print_status(void) {
@@ -224,5 +227,11 @@ void mouse_print_status(void) {
     write_int(mouse.dy);
     terminal_write("\n  buttons: ");
     terminal_write_dec(mouse.buttons);
+    terminal_write(" clicks L/R/M: ");
+    terminal_write_dec(mouse.left_clicks);
+    terminal_write("/");
+    terminal_write_dec(mouse.right_clicks);
+    terminal_write("/");
+    terminal_write_dec(mouse.middle_clicks);
     terminal_write("\n");
 }

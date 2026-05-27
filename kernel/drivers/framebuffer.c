@@ -18,9 +18,17 @@
 #define FB_CONSOLE_MARGIN_Y 24
 #define FB_CONSOLE_OVERLAY_ROWS 18
 #define FB_CONSOLE_OVERLAY_MARGIN 10
+#define FB_MOUSE_CURSOR_WIDTH 9
+#define FB_MOUSE_CURSOR_HEIGHT 9
+#define FB_MOUSE_CURSOR_SAVE_WIDTH 10
+#define FB_MOUSE_CURSOR_SAVE_HEIGHT 10
 
 static uint32_t framebuffer_stub[FB_STUB_WIDTH * FB_STUB_HEIGHT];
 static struct framebuffer_info framebuffer;
+static int mouse_cursor_saved;
+static uint32_t mouse_cursor_x;
+static uint32_t mouse_cursor_y;
+static uint32_t mouse_cursor_pixels[FB_MOUSE_CURSOR_SAVE_HEIGHT][FB_MOUSE_CURSOR_SAVE_WIDTH];
 static char console_cells[FB_CONSOLE_MAX_ROWS][FB_CONSOLE_MAX_COLS];
 static uint32_t console_cols;
 static uint32_t console_rows;
@@ -125,6 +133,7 @@ void framebuffer_clear(uint32_t color) {
         return;
     }
 
+    framebuffer_reset_mouse_cursor();
     for (uint32_t y = 0; y < framebuffer.height; y++) {
         for (uint32_t x = 0; x < framebuffer.width; x++) {
             framebuffer_put_pixel(x, y, color);
@@ -201,6 +210,95 @@ void framebuffer_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t heig
     framebuffer_draw_line(x, y, x, y + height - 1, color);
     framebuffer_draw_line(x + width - 1, y, x + width - 1, y + height - 1, color);
     framebuffer_draw_line(x, y + height - 1, x + width - 1, y + height - 1, color);
+}
+
+void framebuffer_reset_mouse_cursor(void) {
+    mouse_cursor_saved = 0;
+}
+
+static void framebuffer_restore_mouse_cursor(void) {
+    if (!mouse_cursor_saved) {
+        return;
+    }
+
+    for (uint32_t row = 0; row < FB_MOUSE_CURSOR_SAVE_HEIGHT; row++) {
+        for (uint32_t col = 0; col < FB_MOUSE_CURSOR_SAVE_WIDTH; col++) {
+            uint32_t x = mouse_cursor_x + col;
+            uint32_t y = mouse_cursor_y + row;
+
+            if (x < framebuffer.width && y < framebuffer.height) {
+                framebuffer_put_pixel(x, y, mouse_cursor_pixels[row][col]);
+            }
+        }
+    }
+
+    mouse_cursor_saved = 0;
+}
+
+void framebuffer_erase_mouse_cursor(void) {
+    framebuffer_restore_mouse_cursor();
+}
+
+static void framebuffer_save_mouse_cursor(uint32_t x, uint32_t y) {
+    mouse_cursor_x = x;
+    mouse_cursor_y = y;
+
+    for (uint32_t row = 0; row < FB_MOUSE_CURSOR_SAVE_HEIGHT; row++) {
+        for (uint32_t col = 0; col < FB_MOUSE_CURSOR_SAVE_WIDTH; col++) {
+            uint32_t px = x + col;
+            uint32_t py = y + row;
+
+            mouse_cursor_pixels[row][col] =
+                (px < framebuffer.width && py < framebuffer.height) ? framebuffer_get_pixel(px, py) : 0;
+        }
+    }
+
+    mouse_cursor_saved = 1;
+}
+
+static int framebuffer_mouse_cursor_pixel(uint32_t col, uint32_t row) {
+    if (col == 4 || row == 4) {
+        return 1;
+    }
+
+    if (col >= 3 && col <= 5 && row >= 3 && row <= 5) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static void framebuffer_draw_mouse_cursor_pixels(uint32_t x, uint32_t y, uint32_t color,
+        uint32_t offset_x, uint32_t offset_y) {
+    for (uint32_t row = 0; row < FB_MOUSE_CURSOR_HEIGHT; row++) {
+        for (uint32_t col = 0; col < FB_MOUSE_CURSOR_WIDTH; col++) {
+            if (framebuffer_mouse_cursor_pixel(col, row)) {
+                framebuffer_put_pixel(x + col + offset_x, y + row + offset_y, color);
+            }
+        }
+    }
+}
+
+void framebuffer_draw_mouse_cursor(uint32_t x, uint32_t y, uint8_t buttons) {
+    uint32_t color = buttons ? 0x00FFD166 : 0x00FFFFFF;
+
+    if (!framebuffer_available()) {
+        return;
+    }
+
+    framebuffer_restore_mouse_cursor();
+
+    if (framebuffer.width > FB_MOUSE_CURSOR_SAVE_WIDTH && x > framebuffer.width - FB_MOUSE_CURSOR_SAVE_WIDTH) {
+        x = framebuffer.width - FB_MOUSE_CURSOR_SAVE_WIDTH;
+    }
+
+    if (framebuffer.height > FB_MOUSE_CURSOR_SAVE_HEIGHT && y > framebuffer.height - FB_MOUSE_CURSOR_SAVE_HEIGHT) {
+        y = framebuffer.height - FB_MOUSE_CURSOR_SAVE_HEIGHT;
+    }
+
+    framebuffer_save_mouse_cursor(x, y);
+    framebuffer_draw_mouse_cursor_pixels(x, y, 0x00000000, 1, 1);
+    framebuffer_draw_mouse_cursor_pixels(x, y, color, 0, 0);
 }
 
 static uint8_t framebuffer_glyph_row(char character, uint32_t row) {
