@@ -2,6 +2,7 @@
 #include "framebuffer.h"
 #include "heap.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "pmm.h"
 #include "shell.h"
 #include "task.h"
@@ -27,11 +28,13 @@ void kernel_main(void) {
         terminal_write("Kernel1 graphics console\n");
     }
     task_initialize();
+    mouse_initialize();
     arch_enable_irq(0);
     arch_enable_irq(1);
+    arch_enable_irq(12);
 
     terminal_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    terminal_write("Architecture ready. IRQ0 timer and IRQ1 keyboard enabled.\n");
+    terminal_write("Architecture ready. IRQ0 timer, IRQ1 keyboard, and IRQ12 mouse enabled.\n");
 
     terminal_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     terminal_write("Portable layout ready. Next: app loader/initrd.\n");

@@ -75,6 +75,21 @@ static void string_copy_until(char* destination, const char* source, char delimi
     destination[index] = '\0';
 }
 
+static void string_copy(char* destination, const char* source, uint32_t size) {
+    uint32_t index = 0;
+
+    if (size == 0) {
+        return;
+    }
+
+    while (index < size - 1 && source[index] != '\0') {
+        destination[index] = source[index];
+        index++;
+    }
+
+    destination[index] = '\0';
+}
+
 static const char* string_after_delimiter(const char* text, char delimiter) {
     while (*text != '\0' && *text != delimiter && *text != '\n') {
         text++;
@@ -332,6 +347,50 @@ void app_print_all(void) {
 
     initrd_for_each_kapp_app(app_print_kapp, 0);
     initrd_for_each_app_metadata(app_print_metadata, 0);
+}
+
+struct app_summary_context {
+    struct app_summary* summary;
+    uint32_t visible_count;
+};
+
+static void app_summary_add_visible(struct app_summary_context* context, const char* name) {
+    if (context->visible_count >= APP_SUMMARY_VISIBLE_NAMES) {
+        return;
+    }
+
+    string_copy(context->summary->names[context->visible_count], name, APP_SUMMARY_NAME_SIZE);
+    context->visible_count++;
+}
+
+static void app_summary_count_kapp(const char* app_name, const char* path, void* context) {
+    struct app_summary_context* summary_context = (struct app_summary_context*)context;
+
+    (void)path;
+    summary_context->summary->kapp_count++;
+    app_summary_add_visible(summary_context, app_name);
+}
+
+void app_get_summary(struct app_summary* summary) {
+    struct app_summary_context context;
+
+    if (summary == 0) {
+        return;
+    }
+
+    summary->built_in_count = sizeof(apps) / sizeof(apps[0]);
+    summary->kapp_count = 0;
+    for (uint32_t i = 0; i < APP_SUMMARY_VISIBLE_NAMES; i++) {
+        summary->names[i][0] = '\0';
+    }
+
+    context.summary = summary;
+    context.visible_count = 0;
+    for (uint32_t i = 0; i < summary->built_in_count; i++) {
+        app_summary_add_visible(&context, apps[i].name);
+    }
+
+    initrd_for_each_kapp_app(app_summary_count_kapp, &context);
 }
 
 const struct app_descriptor* app_find(const char* name) {

@@ -6,8 +6,21 @@
 typedef void (*kfs_visit_callback)(const char* name, uint32_t size,
     uint32_t data_lba, int is_directory, void* context);
 
+struct kfs_usage {
+    uint32_t total_sectors;
+    uint32_t used_sectors;
+    uint32_t free_sectors;
+    uint32_t reserved_sectors;
+    uint32_t data_sectors;
+    uint32_t used_data_sectors;
+    uint32_t percent_used;
+    uint32_t bytes_used;
+    uint32_t bytes_free;
+};
+
 int kfs_format(void);
 int kfs_check(int verbose);
+int kfs_get_usage(struct kfs_usage* usage);
 int kfs_print_usage(void);
 int kfs_print_info(void);
 int kfs_list(void);

@@ -199,7 +199,7 @@ The framebuffer uses a BIOS VBE linear framebuffer when the bootloader can
 activate mode `0x144` (`1024x768x32` on QEMU/Bochs VBE). If that path fails, it falls back to a
 RAM-backed stub (`320x200x32`) so the shell and boot path stay stable while the
 drawing API keeps working. The shell command
-`gfx [info|test|desktop|console [text]|mirror [on|off|status|clear]|preview|clear]`
+`gfx [info|status|files [path]|apps|storage|launcher|dashboard [compact|full]|auto <on|off|status|compact|full> [compact|full]|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]`
 can inspect the mode, draw test/desktop/console mockups into that buffer,
 append lines to a small graphical console buffer, mirror normal shell output
 into that graphical console, and print a downsampled ASCII preview. The drawing

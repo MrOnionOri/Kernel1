@@ -364,16 +364,11 @@ void framebuffer_demo_desktop(void) {
     framebuffer_clear(0x00181A20);
     framebuffer_fill_rect(0, 0, framebuffer.width, 18, 0x00262A33);
     framebuffer_fill_rect(0, framebuffer.height - 22, framebuffer.width, 22, 0x00262A33);
-    framebuffer_draw_window(20, 34, 128, 86, 0x0045A3FF, 0x00333A46);
     framebuffer_draw_window(172, 48, 116, 104, 0x0048D597, 0x00343F38);
     framebuffer_write_text(8, 6, "KERNEL1", 0x00E8EAED);
-    framebuffer_write_text(36, 51, "SHELL", 0x00FFFFFF);
     framebuffer_write_text(188, 65, "FILES", 0x00FFFFFF);
-    framebuffer_fill_rect(36, 58, 92, 8, 0x00E8EAED);
-    framebuffer_fill_rect(36, 74, 72, 8, 0x009EA7B3);
     framebuffer_fill_rect(188, 74, 76, 10, 0x00FFD166);
     framebuffer_fill_rect(188, 94, 56, 10, 0x00FF6B6B);
-    framebuffer_fill_rect(130, 164, 60, 12, 0x0045A3FF);
 }
 
 void framebuffer_draw_status_panel(uint32_t ticks, uint32_t used_pages, uint32_t free_pages,
@@ -459,6 +454,201 @@ void framebuffer_draw_task_panel(uint32_t ready, uint32_t running, uint32_t slee
         framebuffer_fill_rect(panel_x + 13 + active_width, panel_y + 92,
             bar_width - active_width - 2, 8, 0x00343F38);
     }
+}
+
+void framebuffer_draw_storage_panel(int formatted, uint32_t used_sectors,
+        uint32_t free_sectors, uint32_t used_data_sectors, uint32_t free_data_sectors,
+        uint32_t percent_used) {
+    uint32_t panel_x = framebuffer.hardware_backed ? 680 : 24;
+    uint32_t panel_y = framebuffer.hardware_backed ? 164 : 270;
+    uint32_t panel_width = framebuffer.hardware_backed ? 230 : 250;
+    uint32_t panel_height = 112;
+    uint32_t total_sectors = used_sectors + free_sectors;
+    uint32_t bar_width = panel_width - 28;
+    uint32_t used_width = 0;
+
+    if (!framebuffer_available()) {
+        return;
+    }
+
+    if (panel_x + panel_width + 8 > framebuffer.width) {
+        panel_x = framebuffer.width > panel_width + 12 ? framebuffer.width - panel_width - 12 : 4;
+    }
+
+    if (panel_y + panel_height + 28 > framebuffer.height) {
+        panel_y = framebuffer.height > panel_height + 150 ? 150 : 24;
+    }
+
+    framebuffer_fill_rect(panel_x + 4, panel_y + 4, panel_width, panel_height, 0x00000000);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, panel_height, 0x001C2430);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, 15, 0x00FFD166);
+    framebuffer_draw_rect(panel_x, panel_y, panel_width, panel_height, 0x00DCE7F3);
+    framebuffer_write_text(panel_x + 8, panel_y + 5, "DISK / KFS", 0x00000000);
+
+    if (!formatted) {
+        framebuffer_write_text(panel_x + 12, panel_y + 34, "NOT FORMATTED", 0x00FF6B6B);
+        framebuffer_write_text(panel_x + 12, panel_y + 50, "RUN KFSFORMAT", 0x00E8EAED);
+        return;
+    }
+
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 26, "USED ", used_sectors, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 38, "FREE ", free_sectors, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 50, "DATA USED ", used_data_sectors, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 62, "DATA FREE ", free_data_sectors, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 74, "USE PCT ", percent_used, 0x00E8EAED);
+
+    framebuffer_draw_rect(panel_x + 12, panel_y + 91, bar_width, 10, 0x009EA7B3);
+    if (total_sectors != 0) {
+        used_width = (used_sectors * (bar_width - 2)) / total_sectors;
+    }
+    framebuffer_fill_rect(panel_x + 13, panel_y + 92, used_width, 8, 0x00FFD166);
+    if (used_width + 2 < bar_width) {
+        framebuffer_fill_rect(panel_x + 13 + used_width, panel_y + 92,
+            bar_width - used_width - 2, 8, 0x0048D597);
+    }
+}
+
+void framebuffer_draw_apps_panel(uint32_t built_in_count, uint32_t kapp_count,
+        const char* first_name, const char* second_name, const char* third_name) {
+    uint32_t panel_x = framebuffer.hardware_backed ? 360 : 24;
+    uint32_t panel_y = framebuffer.hardware_backed ? 164 : 394;
+    uint32_t panel_width = framebuffer.hardware_backed ? 290 : 250;
+    uint32_t panel_height = 112;
+    uint32_t total = built_in_count + kapp_count;
+    uint32_t bar_width = panel_width - 28;
+    uint32_t kapp_width = 0;
+
+    if (!framebuffer_available()) {
+        return;
+    }
+
+    if (panel_x + panel_width + 8 > framebuffer.width) {
+        panel_x = framebuffer.width > panel_width + 12 ? framebuffer.width - panel_width - 12 : 4;
+    }
+
+    if (panel_y + panel_height + 28 > framebuffer.height) {
+        panel_y = framebuffer.height > panel_height + 150 ? 150 : 24;
+    }
+
+    framebuffer_fill_rect(panel_x + 4, panel_y + 4, panel_width, panel_height, 0x00000000);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, panel_height, 0x001C2430);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, 15, 0x00FF6B6B);
+    framebuffer_draw_rect(panel_x, panel_y, panel_width, panel_height, 0x00DCE7F3);
+    framebuffer_write_text(panel_x + 8, panel_y + 5, "APPS", 0x00FFFFFF);
+
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 26, "BUILT-IN ", built_in_count, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 38, "KAPP ", kapp_count, 0x00E8EAED);
+    if (first_name != 0 && first_name[0] != '\0') {
+        framebuffer_write_text(panel_x + 12, panel_y + 52, first_name, 0x0048D597);
+    }
+    if (second_name != 0 && second_name[0] != '\0') {
+        framebuffer_write_text(panel_x + 12, panel_y + 64, second_name, 0x0048D597);
+    }
+    if (third_name != 0 && third_name[0] != '\0') {
+        framebuffer_write_text(panel_x + 12, panel_y + 76, third_name, 0x0048D597);
+    }
+
+    framebuffer_draw_rect(panel_x + 12, panel_y + 91, bar_width, 10, 0x009EA7B3);
+    if (total != 0) {
+        kapp_width = (kapp_count * (bar_width - 2)) / total;
+    }
+    framebuffer_fill_rect(panel_x + 13, panel_y + 92, kapp_width, 8, 0x00FFD166);
+    if (kapp_width + 2 < bar_width) {
+        framebuffer_fill_rect(panel_x + 13 + kapp_width, panel_y + 92,
+            bar_width - kapp_width - 2, 8, 0x00FF6B6B);
+    }
+}
+
+static void framebuffer_write_file_entry(uint32_t x, uint32_t y, const char* name,
+        uint32_t type) {
+    if (name == 0 || name[0] == '\0') {
+        return;
+    }
+
+    framebuffer_write_text(x, y, type == 2 ? "D " : "F ", type == 2 ? 0x00FFD166 : 0x0048D597);
+    framebuffer_write_text(x + 12, y, name, 0x00E8EAED);
+}
+
+void framebuffer_draw_files_panel(int valid, const char* path, uint32_t children,
+        const char* first_name, uint32_t first_type,
+        const char* second_name, uint32_t second_type,
+        const char* third_name, uint32_t third_type) {
+    uint32_t panel_x = framebuffer.hardware_backed ? 172 : 24;
+    uint32_t panel_y = framebuffer.hardware_backed ? 48 : 518;
+    uint32_t panel_width = framebuffer.hardware_backed ? 140 : 250;
+    uint32_t panel_height = 118;
+    uint32_t bar_width = panel_width - 20;
+    uint32_t fill_width = children > 10 ? bar_width - 2 : (children * (bar_width - 2)) / 10;
+
+    if (!framebuffer_available()) {
+        return;
+    }
+
+    if (panel_x + panel_width + 8 > framebuffer.width) {
+        panel_x = 4;
+    }
+
+    if (panel_y + panel_height + 28 > framebuffer.height) {
+        panel_y = framebuffer.height > panel_height + 28 ? framebuffer.height - panel_height - 28 : 4;
+    }
+
+    framebuffer_fill_rect(panel_x + 4, panel_y + 4, panel_width, panel_height, 0x00000000);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, panel_height, 0x00343F38);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, 15, 0x0048D597);
+    framebuffer_draw_rect(panel_x, panel_y, panel_width, panel_height, 0x00DCE7F3);
+    framebuffer_write_text(panel_x + 8, panel_y + 5, "FILES", 0x00FFFFFF);
+
+    if (!valid) {
+        framebuffer_write_text(panel_x + 10, panel_y + 30, "NOT FOUND", 0x00FF6B6B);
+        if (path != 0 && path[0] != '\0') {
+            framebuffer_write_text(panel_x + 10, panel_y + 44, path, 0x00E8EAED);
+        }
+        return;
+    }
+
+    framebuffer_write_text(panel_x + 10, panel_y + 25, path, 0x00FFD166);
+    framebuffer_write_label_uint(panel_x + 10, panel_y + 39, "ITEMS ", children, 0x00E8EAED);
+    framebuffer_write_file_entry(panel_x + 10, panel_y + 54, first_name, first_type);
+    framebuffer_write_file_entry(panel_x + 10, panel_y + 68, second_name, second_type);
+    framebuffer_write_file_entry(panel_x + 10, panel_y + 82, third_name, third_type);
+
+    framebuffer_draw_rect(panel_x + 10, panel_y + 101, bar_width, 8, 0x009EA7B3);
+    framebuffer_fill_rect(panel_x + 11, panel_y + 102, fill_width, 6, 0x00FFD166);
+}
+
+static void framebuffer_draw_launcher_button(uint32_t x, uint32_t y, uint32_t width,
+        const char* label, uint32_t color) {
+    framebuffer_fill_rect(x, y, width, 15, color);
+    framebuffer_draw_rect(x, y, width, 15, 0x00DCE7F3);
+    framebuffer_write_text(x + 6, y + 5, label, 0x00000000);
+}
+
+void framebuffer_draw_launcher_panel(void) {
+    uint32_t panel_x = framebuffer.hardware_backed ? 46 : 24;
+    uint32_t panel_y = framebuffer.hardware_backed ? 194 : 642;
+    uint32_t panel_width = framebuffer.hardware_backed ? 270 : 250;
+    uint32_t panel_height = 108;
+
+    if (!framebuffer_available()) {
+        return;
+    }
+
+    if (panel_y + panel_height + 28 > framebuffer.height) {
+        panel_y = framebuffer.height > panel_height + 28 ? framebuffer.height - panel_height - 28 : 4;
+    }
+
+    framebuffer_fill_rect(panel_x + 4, panel_y + 4, panel_width, panel_height, 0x00000000);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, panel_height, 0x001C2430);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, 15, 0x00FFD166);
+    framebuffer_draw_rect(panel_x, panel_y, panel_width, panel_height, 0x00DCE7F3);
+    framebuffer_write_text(panel_x + 8, panel_y + 5, "LAUNCHER", 0x00000000);
+
+    framebuffer_draw_launcher_button(panel_x + 12, panel_y + 28, 112, "RUN DEMO", 0x0048D597);
+    framebuffer_draw_launcher_button(panel_x + 138, panel_y + 28, 112, "RUN CLOCK", 0x0045A3FF);
+    framebuffer_draw_launcher_button(panel_x + 12, panel_y + 50, 112, "FILES /DISK", 0x00FFD166);
+    framebuffer_draw_launcher_button(panel_x + 138, panel_y + 50, 112, "APPS", 0x00FF6B6B);
+    framebuffer_draw_launcher_button(panel_x + 12, panel_y + 72, 112, "GFX AUTO", 0x009EA7B3);
+    framebuffer_draw_launcher_button(panel_x + 138, panel_y + 72, 112, "STATUS", 0x009EA7B3);
 }
 
 static uint32_t framebuffer_console_cols(void) {

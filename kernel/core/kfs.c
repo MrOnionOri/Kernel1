@@ -630,23 +630,34 @@ int kfs_check(int verbose) {
     return errors == 0;
 }
 
-int kfs_print_usage(void) {
+int kfs_get_usage(struct kfs_usage* usage) {
     struct kfs_superblock superblock;
     uint8_t bitmap[KFS_SECTOR_SIZE];
     uint32_t used_sectors = 0;
 
+    if (usage == 0) {
+        return 0;
+    }
+
+    usage->total_sectors = 0;
+    usage->used_sectors = 0;
+    usage->free_sectors = 0;
+    usage->reserved_sectors = 0;
+    usage->data_sectors = 0;
+    usage->used_data_sectors = 0;
+    usage->percent_used = 0;
+    usage->bytes_used = 0;
+    usage->bytes_free = 0;
+
     if (!read_superblock(&superblock)) {
-        terminal_write("df: disk is not formatted\n");
         return 0;
     }
 
     if (superblock.total_sectors > KFS_BITMAP_MAX_SECTORS) {
-        terminal_write("df: disk exceeds KFS bitmap capacity\n");
         return 0;
     }
 
     if (!ata_read_data_sector(KFS_BITMAP_LBA, bitmap)) {
-        terminal_write("df: unable to read bitmap\n");
         return 0;
     }
 
@@ -669,27 +680,47 @@ int kfs_print_usage(void) {
         percent = (used_sectors * 100) / superblock.total_sectors;
     }
 
+    usage->total_sectors = superblock.total_sectors;
+    usage->used_sectors = used_sectors;
+    usage->free_sectors = free_sectors;
+    usage->reserved_sectors = reserved_sectors;
+    usage->data_sectors = data_sectors;
+    usage->used_data_sectors = used_data_sectors;
+    usage->percent_used = percent;
+    usage->bytes_used = used_sectors * KFS_SECTOR_SIZE;
+    usage->bytes_free = free_sectors * KFS_SECTOR_SIZE;
+    return 1;
+}
+
+int kfs_print_usage(void) {
+    struct kfs_usage usage;
+
+    if (!kfs_get_usage(&usage)) {
+        terminal_write("df: disk is not formatted or KFS metadata is unreadable\n");
+        return 0;
+    }
+
     terminal_write("Disk usage for /disk:\n");
     terminal_write("  Sectors total: ");
-    terminal_write_dec(superblock.total_sectors);
+    terminal_write_dec(usage.total_sectors);
     terminal_write("\n  Sectors used: ");
-    terminal_write_dec(used_sectors);
+    terminal_write_dec(usage.used_sectors);
     terminal_write("\n  Sectors free: ");
-    terminal_write_dec(free_sectors);
+    terminal_write_dec(usage.free_sectors);
     terminal_write("\n  Use: ");
-    terminal_write_dec(percent);
+    terminal_write_dec(usage.percent_used);
     terminal_write("%\n  Reserved sectors: ");
-    terminal_write_dec(reserved_sectors);
+    terminal_write_dec(usage.reserved_sectors);
     terminal_write("\n  Data sectors: ");
-    terminal_write_dec(data_sectors);
+    terminal_write_dec(usage.data_sectors);
     terminal_write("\n  Data used/free: ");
-    terminal_write_dec(used_data_sectors);
+    terminal_write_dec(usage.used_data_sectors);
     terminal_write("/");
-    terminal_write_dec(data_sectors - used_data_sectors);
+    terminal_write_dec(usage.data_sectors - usage.used_data_sectors);
     terminal_write("\n  Bytes used/free: ");
-    terminal_write_dec(used_sectors * KFS_SECTOR_SIZE);
+    terminal_write_dec(usage.bytes_used);
     terminal_write("/");
-    terminal_write_dec(free_sectors * KFS_SECTOR_SIZE);
+    terminal_write_dec(usage.bytes_free);
     terminal_write("\n");
     return 1;
 }

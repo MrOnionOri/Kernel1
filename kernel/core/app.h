@@ -8,12 +8,22 @@ struct app_descriptor {
     uint32_t entry;
 };
 
+#define APP_SUMMARY_VISIBLE_NAMES 3
+#define APP_SUMMARY_NAME_SIZE 24
+
+struct app_summary {
+    uint32_t built_in_count;
+    uint32_t kapp_count;
+    char names[APP_SUMMARY_VISIBLE_NAMES][APP_SUMMARY_NAME_SIZE];
+};
+
 enum app_kind {
     APP_KIND_UNKNOWN = 0,
     APP_KIND_BUILT_IN,
     APP_KIND_KAPP,
 };
 
+void app_get_summary(struct app_summary* summary);
 void app_print_all(void);
 void app_print_info(const char* name);
 void app_print_source(const char* name);

@@ -1,20 +1,25 @@
 #include "shell_system.h"
 
 #include "arch.h"
+#include "app.h"
 #include "ata.h"
 #include "framebuffer.h"
 #include "heap.h"
 #include "kfs.h"
 #include "memory_map.h"
+#include "mouse.h"
 #include "pmm.h"
+#include "shell_fs.h"
 #include "task.h"
 #include "terminal.h"
 #include "timer.h"
 #include "user_mode.h"
+#include "vfs.h"
 
 #include <stdint.h>
 
 static int gfx_auto_dashboard;
+static int gfx_dashboard_compact = 1;
 
 static int string_equals(const char* left, const char* right) {
     size_t index = 0;
@@ -76,7 +81,7 @@ static uint32_t string_to_uint(const char* text, int* ok) {
 }
 
 static void shell_gfx_usage(void) {
-    terminal_write("gfx: usage gfx [info|status|dashboard|auto <on|off|status>|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]\n");
+    terminal_write("gfx: usage gfx [info|status|files [path]|apps|storage|launcher|dashboard [compact|full]|auto <on|off|status|compact|full> [compact|full]|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]\n");
 }
 
 static void shell_gfx_restore_console_overlay(void) {
@@ -85,8 +90,59 @@ static void shell_gfx_restore_console_overlay(void) {
     }
 }
 
+static void shell_gfx_draw_apps_panel(void) {
+    struct app_summary summary;
+
+    app_get_summary(&summary);
+    framebuffer_draw_apps_panel(summary.built_in_count, summary.kapp_count,
+        summary.names[0], summary.names[1], summary.names[2]);
+}
+
+static void shell_gfx_copy_limited(char* output, size_t output_size, const char* input) {
+    size_t index = 0;
+
+    if (output_size == 0) {
+        return;
+    }
+
+    while (input[index] != '\0' && index + 1 < output_size) {
+        output[index] = input[index];
+        index++;
+    }
+
+    output[index] = '\0';
+}
+
+static int shell_gfx_draw_files_panel_for_path(const char* path) {
+    struct vfs_stat_info info;
+    struct vfs_dir_entry entry;
+    char names[3][18];
+    uint32_t types[3] = {0, 0, 0};
+    uint32_t index = 0;
+
+    names[0][0] = '\0';
+    names[1][0] = '\0';
+    names[2][0] = '\0';
+
+    if (!vfs_stat_info(path, &info) || info.type != VFS_NODE_DIRECTORY) {
+        framebuffer_draw_files_panel(0, path, 0, "", 0, "", 0, "", 0);
+        return 0;
+    }
+
+    while (index < 3 && vfs_read_dir(path, index, &entry)) {
+        shell_gfx_copy_limited(names[index], sizeof(names[index]), entry.name);
+        types[index] = entry.type;
+        index++;
+    }
+
+    framebuffer_draw_files_panel(1, path, info.children,
+        names[0], types[0], names[1], types[1], names[2], types[2]);
+    return 1;
+}
+
 static void shell_gfx_draw_dashboard(void) {
     struct task_summary summary;
+    struct kfs_usage usage;
 
     task_get_summary(&summary);
     framebuffer_demo_desktop();
@@ -94,12 +150,62 @@ static void shell_gfx_draw_dashboard(void) {
         scheduler_mode_name(scheduler_get_mode()), scheduler_preemption_count());
     framebuffer_draw_task_panel(summary.ready, summary.running, summary.sleeping,
         summary.exited, summary.unused, summary.next_id);
+    if (!gfx_dashboard_compact) {
+        shell_gfx_draw_files_panel_for_path(shell_fs_current_directory());
+        shell_gfx_draw_apps_panel();
+        framebuffer_draw_launcher_panel();
+    }
+    if (kfs_get_usage(&usage)) {
+        framebuffer_draw_storage_panel(1, usage.used_sectors, usage.free_sectors,
+            usage.used_data_sectors, usage.data_sectors - usage.used_data_sectors,
+            usage.percent_used);
+    } else {
+        framebuffer_draw_storage_panel(0, 0, 0, 0, 0, 0);
+    }
     shell_gfx_restore_console_overlay();
+}
+
+static void shell_gfx_refresh_dashboard_panels(void) {
+    struct task_summary summary;
+    struct kfs_usage usage;
+
+    task_get_summary(&summary);
+    if (!gfx_dashboard_compact) {
+        shell_gfx_draw_files_panel_for_path(shell_fs_current_directory());
+        shell_gfx_draw_apps_panel();
+        framebuffer_draw_launcher_panel();
+    }
+    framebuffer_draw_status_panel(timer_ticks(), pmm_used_pages(), pmm_free_pages(),
+        scheduler_mode_name(scheduler_get_mode()), scheduler_preemption_count());
+    framebuffer_draw_task_panel(summary.ready, summary.running, summary.sleeping,
+        summary.exited, summary.unused, summary.next_id);
+    if (kfs_get_usage(&usage)) {
+        framebuffer_draw_storage_panel(1, usage.used_sectors, usage.free_sectors,
+            usage.used_data_sectors, usage.data_sectors - usage.used_data_sectors,
+            usage.percent_used);
+    } else {
+        framebuffer_draw_storage_panel(0, 0, 0, 0, 0, 0);
+    }
+    shell_gfx_restore_console_overlay();
+}
+
+static int shell_gfx_set_dashboard_layout(const char* layout) {
+    if (string_equals_ci(layout, "compact")) {
+        gfx_dashboard_compact = 1;
+        return 1;
+    }
+
+    if (string_equals_ci(layout, "full")) {
+        gfx_dashboard_compact = 0;
+        return 1;
+    }
+
+    return 0;
 }
 
 void shell_system_after_command(void) {
     if (gfx_auto_dashboard && framebuffer_get_info()->hardware_backed) {
-        shell_gfx_draw_dashboard();
+        shell_gfx_refresh_dashboard_panels();
     }
 }
 
@@ -233,6 +339,12 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
         return 1;
     }
 
+    if (string_equals(line->args[0], "mouse")) {
+        mouse_print_status();
+        *last_status = 0;
+        return 1;
+    }
+
     if (string_equals_ci(line->args[0], "gfx")) {
         if (line->count == 1 || (line->count == 2 && string_equals_ci(line->args[1], "info"))) {
             framebuffer_print_info();
@@ -248,16 +360,71 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
             shell_gfx_restore_console_overlay();
             terminal_write("gfx: status panel drawn\n");
             *last_status = 0;
-        } else if (line->count == 2 && string_equals_ci(line->args[1], "dashboard")) {
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "apps")) {
+            shell_gfx_draw_apps_panel();
+            shell_gfx_restore_console_overlay();
+            terminal_write("gfx: apps panel drawn\n");
+            *last_status = 0;
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "launcher")) {
+            framebuffer_draw_launcher_panel();
+            shell_gfx_restore_console_overlay();
+            terminal_write("gfx: launcher panel drawn\n");
+            *last_status = 0;
+        } else if (line->count >= 2 && string_equals_ci(line->args[1], "files")) {
+            char path[SHELL_FS_PATH_SIZE];
+            if (line->count >= 3) {
+                shell_fs_resolve_path(line->args[2], path, sizeof(path));
+            } else {
+                shell_gfx_copy_limited(path, sizeof(path), shell_fs_current_directory());
+            }
+
+            if (shell_gfx_draw_files_panel_for_path(path)) {
+                terminal_write("gfx: files panel drawn\n");
+                *last_status = 0;
+            } else {
+                terminal_write("gfx files: directory not found\n");
+                *last_status = 1;
+            }
+            shell_gfx_restore_console_overlay();
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "storage")) {
+            struct kfs_usage usage;
+            if (kfs_get_usage(&usage)) {
+                framebuffer_draw_storage_panel(1, usage.used_sectors, usage.free_sectors,
+                    usage.used_data_sectors, usage.data_sectors - usage.used_data_sectors,
+                    usage.percent_used);
+                terminal_write("gfx: storage panel drawn\n");
+                *last_status = 0;
+            } else {
+                framebuffer_draw_storage_panel(0, 0, 0, 0, 0, 0);
+                terminal_write("gfx: storage panel drawn (disk not formatted)\n");
+                *last_status = 1;
+            }
+        } else if (line->count >= 2 && string_equals_ci(line->args[1], "dashboard")) {
+            if (line->count == 3 && !shell_gfx_set_dashboard_layout(line->args[2])) {
+                terminal_write("gfx dashboard: usage gfx dashboard [compact|full]\n");
+                *last_status = 1;
+                return 1;
+            } else if (line->count > 3) {
+                terminal_write("gfx dashboard: usage gfx dashboard [compact|full]\n");
+                *last_status = 1;
+                return 1;
+            }
             shell_gfx_draw_dashboard();
-            terminal_write("gfx: dashboard drawn\n");
+            terminal_write(gfx_dashboard_compact ? "gfx: compact dashboard drawn\n" : "gfx: full dashboard drawn\n");
             *last_status = 0;
         } else if (line->count >= 2 && string_equals_ci(line->args[1], "auto")) {
             if (line->count == 2 || (line->count == 3 && string_equals_ci(line->args[2], "status"))) {
                 terminal_write("gfx auto dashboard: ");
                 terminal_write(gfx_auto_dashboard ? "on\n" : "off\n");
+                terminal_write("gfx dashboard layout: ");
+                terminal_write(gfx_dashboard_compact ? "compact\n" : "full\n");
                 *last_status = 0;
-            } else if (line->count == 3 && string_equals_ci(line->args[2], "on")) {
+            } else if ((line->count == 3 || line->count == 4) && string_equals_ci(line->args[2], "on")) {
+                if (line->count == 4 && !shell_gfx_set_dashboard_layout(line->args[3])) {
+                    terminal_write("gfx auto: usage gfx auto <on|off|status|compact|full> [compact|full]\n");
+                    *last_status = 1;
+                    return 1;
+                }
                 gfx_auto_dashboard = 1;
                 terminal_write("gfx: auto dashboard on\n");
                 shell_gfx_draw_dashboard();
@@ -266,8 +433,14 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
                 gfx_auto_dashboard = 0;
                 terminal_write("gfx: auto dashboard off\n");
                 *last_status = 0;
+            } else if (line->count == 3 && shell_gfx_set_dashboard_layout(line->args[2])) {
+                terminal_write(gfx_dashboard_compact ? "gfx: auto dashboard layout compact\n" : "gfx: auto dashboard layout full\n");
+                if (gfx_auto_dashboard) {
+                    shell_gfx_draw_dashboard();
+                }
+                *last_status = 0;
             } else {
-                terminal_write("gfx auto: usage gfx auto <on|off|status>\n");
+                terminal_write("gfx auto: usage gfx auto <on|off|status|compact|full> [compact|full]\n");
                 *last_status = 1;
             }
         } else if (line->count >= 2 && string_equals_ci(line->args[1], "scene")) {

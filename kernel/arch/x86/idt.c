@@ -1,6 +1,7 @@
 #include "idt.h"
 
 #include "keyboard.h"
+#include "mouse.h"
 #include "pic.h"
 #include "syscall.h"
 #include "task.h"
@@ -166,6 +167,8 @@ static void irq_handler(struct interrupt_frame* frame) {
         scheduler_preempt_if_needed(frame);
     } else if (irq == 1) {
         keyboard_handle_irq();
+    } else if (irq == 12) {
+        mouse_handle_irq();
     }
 
     pic_send_eoi(irq);
