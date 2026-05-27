@@ -418,6 +418,49 @@ void framebuffer_draw_status_panel(uint32_t ticks, uint32_t used_pages, uint32_t
     }
 }
 
+void framebuffer_draw_task_panel(uint32_t ready, uint32_t running, uint32_t sleeping,
+        uint32_t exited, uint32_t unused, uint32_t next_id) {
+    uint32_t panel_x = framebuffer.hardware_backed ? 680 : 24;
+    uint32_t panel_y = framebuffer.hardware_backed ? 38 : 146;
+    uint32_t panel_width = framebuffer.hardware_backed ? 230 : 250;
+    uint32_t panel_height = 112;
+    uint32_t total = ready + running + sleeping + exited + unused;
+    uint32_t active = ready + running + sleeping;
+    uint32_t bar_width = panel_width - 28;
+    uint32_t active_width = 0;
+
+    if (!framebuffer_available()) {
+        return;
+    }
+
+    if (panel_x + panel_width + 8 > framebuffer.width) {
+        panel_x = framebuffer.width > panel_width + 12 ? framebuffer.width - panel_width - 12 : 4;
+        panel_y += 124;
+    }
+
+    framebuffer_fill_rect(panel_x + 4, panel_y + 4, panel_width, panel_height, 0x00000000);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, panel_height, 0x001C2430);
+    framebuffer_fill_rect(panel_x, panel_y, panel_width, 15, 0x0048D597);
+    framebuffer_draw_rect(panel_x, panel_y, panel_width, panel_height, 0x00DCE7F3);
+    framebuffer_write_text(panel_x + 8, panel_y + 5, "TASKS", 0x00FFFFFF);
+
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 26, "READY ", ready, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 38, "RUNNING ", running, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 50, "SLEEPING ", sleeping, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 62, "EXITED ", exited, 0x00E8EAED);
+    framebuffer_write_label_uint(panel_x + 12, panel_y + 74, "NEXT ID ", next_id, 0x00E8EAED);
+
+    framebuffer_draw_rect(panel_x + 12, panel_y + 91, bar_width, 10, 0x009EA7B3);
+    if (total != 0) {
+        active_width = (active * (bar_width - 2)) / total;
+    }
+    framebuffer_fill_rect(panel_x + 13, panel_y + 92, active_width, 8, 0x0048D597);
+    if (active_width + 2 < bar_width) {
+        framebuffer_fill_rect(panel_x + 13 + active_width, panel_y + 92,
+            bar_width - active_width - 2, 8, 0x00343F38);
+    }
+}
+
 static uint32_t framebuffer_console_cols(void) {
     uint32_t cols = 1;
     uint32_t left_margin = framebuffer.hardware_backed ? FB_CONSOLE_OVERLAY_MARGIN : FB_CONSOLE_MARGIN_X;

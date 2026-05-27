@@ -14,6 +14,8 @@
 
 #include <stdint.h>
 
+static int gfx_auto_dashboard;
+
 static int string_equals(const char* left, const char* right) {
     size_t index = 0;
 
@@ -74,12 +76,30 @@ static uint32_t string_to_uint(const char* text, int* ok) {
 }
 
 static void shell_gfx_usage(void) {
-    terminal_write("gfx: usage gfx [info|status|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]\n");
+    terminal_write("gfx: usage gfx [info|status|dashboard|auto <on|off|status>|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview]\n");
 }
 
 static void shell_gfx_restore_console_overlay(void) {
     if (terminal_graphics_mirror_enabled()) {
         framebuffer_console_reset();
+    }
+}
+
+static void shell_gfx_draw_dashboard(void) {
+    struct task_summary summary;
+
+    task_get_summary(&summary);
+    framebuffer_demo_desktop();
+    framebuffer_draw_status_panel(timer_ticks(), pmm_used_pages(), pmm_free_pages(),
+        scheduler_mode_name(scheduler_get_mode()), scheduler_preemption_count());
+    framebuffer_draw_task_panel(summary.ready, summary.running, summary.sleeping,
+        summary.exited, summary.unused, summary.next_id);
+    shell_gfx_restore_console_overlay();
+}
+
+void shell_system_after_command(void) {
+    if (gfx_auto_dashboard && framebuffer_get_info()->hardware_backed) {
+        shell_gfx_draw_dashboard();
     }
 }
 
@@ -228,6 +248,28 @@ int shell_system_handle_line(const struct shell_line* line, int* last_status) {
             shell_gfx_restore_console_overlay();
             terminal_write("gfx: status panel drawn\n");
             *last_status = 0;
+        } else if (line->count == 2 && string_equals_ci(line->args[1], "dashboard")) {
+            shell_gfx_draw_dashboard();
+            terminal_write("gfx: dashboard drawn\n");
+            *last_status = 0;
+        } else if (line->count >= 2 && string_equals_ci(line->args[1], "auto")) {
+            if (line->count == 2 || (line->count == 3 && string_equals_ci(line->args[2], "status"))) {
+                terminal_write("gfx auto dashboard: ");
+                terminal_write(gfx_auto_dashboard ? "on\n" : "off\n");
+                *last_status = 0;
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "on")) {
+                gfx_auto_dashboard = 1;
+                terminal_write("gfx: auto dashboard on\n");
+                shell_gfx_draw_dashboard();
+                *last_status = 0;
+            } else if (line->count == 3 && string_equals_ci(line->args[2], "off")) {
+                gfx_auto_dashboard = 0;
+                terminal_write("gfx: auto dashboard off\n");
+                *last_status = 0;
+            } else {
+                terminal_write("gfx auto: usage gfx auto <on|off|status>\n");
+                *last_status = 1;
+            }
         } else if (line->count >= 2 && string_equals_ci(line->args[1], "scene")) {
             shell_gfx_scene_command(line, last_status, 2);
         } else if (line->count == 2 && string_equals_ci(line->args[1], "test")) {

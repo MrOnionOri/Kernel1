@@ -31,6 +31,8 @@ void framebuffer_test_pattern(void);
 void framebuffer_demo_desktop(void);
 void framebuffer_draw_status_panel(uint32_t ticks, uint32_t used_pages, uint32_t free_pages,
     const char* scheduler_mode, uint32_t preemptions);
+void framebuffer_draw_task_panel(uint32_t ready, uint32_t running, uint32_t sleeping,
+    uint32_t exited, uint32_t unused, uint32_t next_id);
 void framebuffer_console_reset(void);
 void framebuffer_console_write(const char* text);
 void framebuffer_console_cursor_left(void);

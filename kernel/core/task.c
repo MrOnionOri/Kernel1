@@ -885,51 +885,64 @@ int task_print_context(uint32_t id) {
     return 1;
 }
 
-void task_print_summary(void) {
+void task_get_summary(struct task_summary* summary) {
     task_wake_sleeping();
-    uint32_t unused = 0;
-    uint32_t ready = 0;
-    uint32_t running = 0;
-    uint32_t sleeping = 0;
-    uint32_t exited = 0;
+
+    if (summary == 0) {
+        return;
+    }
+
+    summary->unused = 0;
+    summary->ready = 0;
+    summary->running = 0;
+    summary->sleeping = 0;
+    summary->exited = 0;
+    summary->next_id = next_task_id;
+    summary->scheduler_cursor = scheduler_cursor;
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         switch (tasks[i].state) {
             case TASK_UNUSED:
-                unused++;
+                summary->unused++;
                 break;
             case TASK_READY:
-                ready++;
+                summary->ready++;
                 break;
             case TASK_RUNNING:
-                running++;
+                summary->running++;
                 break;
             case TASK_SLEEPING:
-                sleeping++;
+                summary->sleeping++;
                 break;
             case TASK_EXITED:
-                exited++;
+                summary->exited++;
                 break;
             default:
                 break;
         }
     }
+}
+
+void task_print_summary(void) {
+    struct task_summary summary;
+
+    task_get_summary(&summary);
 
     terminal_write("Task summary:\n  ready=");
-    terminal_write_dec(ready);
+    terminal_write_dec(summary.ready);
     terminal_write(" running=");
-    terminal_write_dec(running);
+    terminal_write_dec(summary.running);
     terminal_write(" exited=");
-    terminal_write_dec(exited);
+    terminal_write_dec(summary.exited);
     terminal_write(" sleeping=");
-    terminal_write_dec(sleeping);
+    terminal_write_dec(summary.sleeping);
     terminal_write(" unused=");
-    terminal_write_dec(unused);
+    terminal_write_dec(summary.unused);
     terminal_write("\n  next id=");
-    terminal_write_dec(next_task_id);
+    terminal_write_dec(summary.next_id);
     terminal_write(" scheduler cursor=");
-    terminal_write_dec(scheduler_cursor);
-    if (exited > 0) {
+    terminal_write_dec(summary.scheduler_cursor);
+    if (summary.exited > 0) {
         terminal_write("\n  hint: reap -a frees exited task slots");
     }
     terminal_write("\n");

@@ -593,7 +593,7 @@ static void shell_execute_command(void) {
     }
 
     if (string_equals(command_buffer, "help")) {
-        terminal_write("Commands: help, history, env, set <name> <value>, unset <name>, alias <name> <cmd>, unalias <name>, aliases, source <file> [args], exit <code>, foreach <var> <items...> do <cmd>, ifset <var> <cmd>, ifnotset <var> <cmd>, ifeq <a> <b> <cmd>, ifneq <a> <b> <cmd>, echo <text> [> file|>> file], clear, pwd, cd <dir>, ls, tree, find [path] <text>, cat <file>, stat <path>, du [path], cp <src> <dst>, mv <src> <dst>, mkdir [-p] <dir>, touch <file>, write <file> <text>, append <file> <text>, rm [-r] <path>, /disk persistent files, kapp <file>, df, diskinfo, diskread <lba>, diskwrite <lba> <text>, kfsformat, kfscheck [-v], kfsinfo, kfsls, kfssave <name> <text>, kfscat <name>, kfsstat <name>, kfsrm <name>, ticks, gfx [info|status|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview], sched [cooperative|auto|reset], schedtest [-r] [-n rounds], memtest, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, spawn <app>, run <app>, runall [-a], kill <id>, wait [-r] <id>, reap [id|-a], ps, ps -v, ps -s, ctx <id>, tasks, tasksv, about\n");
+        terminal_write("Commands: help, history, env, set <name> <value>, unset <name>, alias <name> <cmd>, unalias <name>, aliases, source <file> [args], exit <code>, foreach <var> <items...> do <cmd>, ifset <var> <cmd>, ifnotset <var> <cmd>, ifeq <a> <b> <cmd>, ifneq <a> <b> <cmd>, echo <text> [> file|>> file], clear, pwd, cd <dir>, ls, tree, find [path] <text>, cat <file>, stat <path>, du [path], cp <src> <dst>, mv <src> <dst>, mkdir [-p] <dir>, touch <file>, write <file> <text>, append <file> <text>, rm [-r] <path>, /disk persistent files, kapp <file>, df, diskinfo, diskread <lba>, diskwrite <lba> <text>, kfsformat, kfscheck [-v], kfsinfo, kfsls, kfssave <name> <text>, kfscat <name>, kfsstat <name>, kfsrm <name>, ticks, gfx [info|status|dashboard|auto <on|off|status>|scene <desktop|test|clear>|shell <on|off|status|clear|demo>|mirror <on|off|status|clear>|preview], sched [cooperative|auto|reset], schedtest [-r] [-n rounds], memtest, mem, pmm, alloc, heap, kmalloc, paging, vmmtest, gdt, ring3, apps, appinfo <app>, which <app>, initrd, spawn <app>, run <app>, runall [-a], kill <id>, wait [-r] <id>, reap [id|-a], ps, ps -v, ps -s, ctx <id>, tasks, tasksv, about\n");
     } else if (string_equals(command_buffer, "clear")) {
         terminal_initialize();
         terminal_write("Kernel1 shell\n");
@@ -762,6 +762,7 @@ void shell_poll(void) {
 
     shell_execute_command();
     scheduler_service_pending();
+    shell_system_after_command();
     shell_clear_buffer();
     command_pending = 0;
     shell_prompt();

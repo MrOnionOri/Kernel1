@@ -58,6 +58,16 @@ struct task {
     int file_fds[TASK_MAX_FILES];
 };
 
+struct task_summary {
+    uint32_t unused;
+    uint32_t ready;
+    uint32_t running;
+    uint32_t sleeping;
+    uint32_t exited;
+    uint32_t next_id;
+    uint32_t scheduler_cursor;
+};
+
 void task_initialize(void);
 enum scheduler_mode scheduler_get_mode(void);
 const char* scheduler_mode_name(enum scheduler_mode mode);
@@ -98,6 +108,7 @@ void task_prepare_sleep_return(struct interrupt_frame* frame, uint32_t ticks);
 void task_print_all(void);
 void task_print_all_verbose(void);
 int task_print_context(uint32_t id);
+void task_get_summary(struct task_summary* summary);
 void task_print_summary(void);
 
 #endif
