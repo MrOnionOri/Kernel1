@@ -34,10 +34,11 @@ behind small arch, driver, VFS, task, and app interfaces.
 5. The interactive shell becomes the main control surface.
 
 The build scripts reserve fixed disk-image space for the kernel and initrd. If
-the kernel image grows, the sector constants in `build.sh`, `build.ps1`, and the
-initrd load address in `kernel/core/initrd.c` must stay in sync. The boot sector
-loads the reserved kernel area plus the initrd sectors, so its `KERNEL_SECTORS`
-constant is currently `kernel sectors + initrd sectors` (`292 + 16 = 308`).
+the kernel image grows, the sector constants in `build.sh`, `build.ps1`,
+`boot/boot.asm`, and the initrd load address in `kernel/core/initrd.c` must stay
+in sync. The image currently reserves 308 sectors for the kernel and 16 for the
+initrd; the boot sector loads both areas (`308 + 16 = 324`), and the kernel reads
+the initrd at `0x36800`.
 
 ## Portability Rule
 

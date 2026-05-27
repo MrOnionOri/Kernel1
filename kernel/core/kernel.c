@@ -31,6 +31,7 @@ void kernel_main(void) {
     mouse_initialize();
     arch_enable_irq(0);
     arch_enable_irq(1);
+    arch_enable_irq(2);
     arch_enable_irq(12);
 
     terminal_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);

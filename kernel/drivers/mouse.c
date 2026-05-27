@@ -9,10 +9,12 @@
 
 #define PS2_STATUS_OUTPUT_FULL 0x01
 #define PS2_STATUS_INPUT_FULL 0x02
+#define PS2_STATUS_AUX_OUTPUT 0x20
 
 #define PS2_COMMAND_READ_CONFIG 0x20
 #define PS2_COMMAND_WRITE_CONFIG 0x60
 #define PS2_COMMAND_ENABLE_AUX 0xA8
+#define PS2_COMMAND_DISABLE_AUX 0xA7
 #define PS2_COMMAND_WRITE_AUX 0xD4
 
 #define PS2_MOUSE_ACK 0xFA
@@ -30,6 +32,8 @@ struct mouse_state {
     uint8_t packet_index;
     uint8_t packet[3];
     uint32_t packets;
+    uint32_t bytes;
+    uint32_t bad_packets;
 };
 
 static struct mouse_state mouse;
@@ -81,6 +85,16 @@ static int ps2_read_data(uint8_t* value) {
     return 1;
 }
 
+static void ps2_flush_output(void) {
+    for (uint32_t i = 0; i < 32; i++) {
+        if ((inb(PS2_STATUS_PORT) & PS2_STATUS_OUTPUT_FULL) == 0) {
+            return;
+        }
+
+        (void)inb(PS2_DATA_PORT);
+    }
+}
+
 static int mouse_send(uint8_t command) {
     uint8_t response = 0;
 
@@ -121,7 +135,11 @@ void mouse_initialize(void) {
     mouse.buttons = 0;
     mouse.packet_index = 0;
     mouse.packets = 0;
+    mouse.bytes = 0;
+    mouse.bad_packets = 0;
 
+    ps2_flush_output();
+    ps2_write_command(PS2_COMMAND_DISABLE_AUX);
     if (!ps2_write_command(PS2_COMMAND_ENABLE_AUX)) {
         return;
     }
@@ -150,9 +168,22 @@ void mouse_initialize(void) {
 }
 
 void mouse_handle_irq(void) {
-    uint8_t byte = inb(PS2_DATA_PORT);
+    uint8_t status = inb(PS2_STATUS_PORT);
+    uint8_t byte;
 
+    if ((status & PS2_STATUS_OUTPUT_FULL) == 0) {
+        return;
+    }
+
+    byte = inb(PS2_DATA_PORT);
+    if ((status & PS2_STATUS_AUX_OUTPUT) == 0) {
+        mouse.bad_packets++;
+        return;
+    }
+
+    mouse.bytes++;
     if (mouse.packet_index == 0 && (byte & 0x08) == 0) {
+        mouse.bad_packets++;
         return;
     }
 
@@ -179,6 +210,10 @@ void mouse_print_status(void) {
     terminal_write(mouse.enabled ? "yes\n" : "no\n");
     terminal_write("  packets: ");
     terminal_write_dec(mouse.packets);
+    terminal_write(" bytes: ");
+    terminal_write_dec(mouse.bytes);
+    terminal_write(" bad: ");
+    terminal_write_dec(mouse.bad_packets);
     terminal_write("\n  x: ");
     write_int(mouse.x);
     terminal_write(" y: ");
