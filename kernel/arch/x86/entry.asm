@@ -3,8 +3,20 @@
 [bits 32]
 [global _start]
 [extern kernel_main]
+[extern bss_start]
+[extern bss_end]
 
 _start:
+    cld
+    ; ESI points to the initrd loaded immediately after the kernel sectors.
+    mov edi, 0x80000
+    mov ecx, 8192 / 4
+    rep movsd
+    mov edi, bss_start
+    mov ecx, bss_end
+    sub ecx, edi
+    xor eax, eax
+    rep stosb
     mov esp, stack_top
     call kernel_main
 

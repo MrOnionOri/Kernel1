@@ -3,6 +3,7 @@
 #include "app.h"
 #include "kapp.h"
 #include "pmm.h"
+#include "shell_system.h"
 #include "shell_fs.h"
 #include "task.h"
 #include "terminal.h"
@@ -239,11 +240,19 @@ int shell_apps_handle_line(const struct shell_line* line, int* last_status) {
             *last_status = 1;
         } else {
             char app_text[SHELL_PARSER_BUFFER_SIZE];
+            struct task* task;
             shell_join_args(line, 1, app_text, sizeof(app_text));
             if (string_equals(line->args[0], "run")) {
-                shell_run_foreground(shell_spawn_app_text(app_text));
+                task = shell_spawn_app_text(app_text);
+                if (task != 0) {
+                    shell_system_note_app_spawn(line->args[1]);
+                }
+                shell_run_foreground(task);
             } else {
-                shell_spawn_app_text(app_text);
+                task = shell_spawn_app_text(app_text);
+                if (task != 0) {
+                    shell_system_note_app_spawn(line->args[1]);
+                }
             }
             *last_status = 0;
         }

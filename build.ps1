@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $BuildDir = "build"
-$KernelSectors = 340
+$KernelSectors = 448
 $KernelBytes = $KernelSectors * 512
 $InitrdSectors = 16
 $InitrdBytes = $InitrdSectors * 512
@@ -33,7 +33,7 @@ Require-Command "i686-elf-objcopy"
 
 New-Item -ItemType Directory -Force $BuildDir | Out-Null
 
-nasm -f bin boot/boot.asm -o "$BuildDir/boot.bin"
+nasm -f bin "-DKERNEL_SECTORS=$KernelSectors" "-DINITRD_SECTORS=$InitrdSectors" boot/boot.asm -o "$BuildDir/boot.bin"
 
 $Objects = @()
 $IncludeFlags = @(

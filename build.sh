@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-KERNEL_SECTORS=340
+KERNEL_SECTORS=448
 KERNEL_BYTES=$((KERNEL_SECTORS * 512))
 INITRD_SECTORS=16
 INITRD_BYTES=$((INITRD_SECTORS * 512))
@@ -48,7 +48,8 @@ require_command objcopy
 
 mkdir -p "$BUILD_DIR"
 
-nasm -f bin boot/boot.asm -o "$BUILD_DIR/boot.bin"
+nasm -f bin -DKERNEL_SECTORS="$KERNEL_SECTORS" -DINITRD_SECTORS="$INITRD_SECTORS" \
+    boot/boot.asm -o "$BUILD_DIR/boot.bin"
 
 OBJECTS=()
 INCLUDE_FLAGS=(
@@ -201,7 +202,15 @@ fi
 
 if [[ "$RUN" -eq 1 ]]; then
     require_command qemu-system-i386
+    QEMU_DISPLAY_ARGS=()
+    if [[ -n "${WSL_DISTRO_NAME:-}" && -n "${DISPLAY:-}" ]]; then
+        # PS/2 needs relative motion; use X11 capture through WSLg's XWayland.
+        export GDK_BACKEND="${GDK_BACKEND:-x11}"
+        QEMU_DISPLAY_ARGS=(-display gtk)
+        echo "QEMU: GTK backend $GDK_BACKEND (WSLg)"
+    fi
     qemu-system-i386 \
+        "${QEMU_DISPLAY_ARGS[@]}" \
         -vga std \
         -drive if=ide,index=0,format=raw,file="$IMAGE_PATH" \
         -drive if=ide,index=1,format=raw,file="$DATA_IMAGE_PATH"

@@ -1,4 +1,5 @@
 #include "idt.h"
+#include "framebuffer.h"
 
 #include "keyboard.h"
 #include "mouse.h"
@@ -152,6 +153,8 @@ static void exception_handler(struct interrupt_frame* frame) {
     }
 
     terminal_write("\nSystem halted.\n");
+    framebuffer_console_set_deferred(0);
+    framebuffer_present();
 
     for (;;) {
         __asm__ volatile("cli; hlt");

@@ -79,7 +79,7 @@ static int shell_mkdir_p(const char* input) {
     return 1;
 }
 
-static void shell_change_directory(const char* path) {
+void shell_fs_change_directory(const char* path) {
     if (string_equals(path, "/")) {
         current_directory[0] = '\0';
         return;
@@ -233,7 +233,7 @@ int shell_fs_handle_line(const struct shell_line* line, int* last_status) {
     }
 
     if (string_equals(line->args[0], "cd")) {
-        shell_change_directory(line->count > 1 ? line->args[1] : "/");
+        shell_fs_change_directory(line->count > 1 ? line->args[1] : "/");
         *last_status = 0;
         return 1;
     }

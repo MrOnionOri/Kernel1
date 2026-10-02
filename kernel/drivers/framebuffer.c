@@ -1,6 +1,7 @@
 #include "framebuffer.h"
 
 #include "arch.h"
+#include "pmm.h"
 #include "terminal.h"
 
 #define FB_STUB_WIDTH 320
@@ -18,16 +19,25 @@
 #define FB_CONSOLE_MARGIN_Y 24
 #define FB_CONSOLE_OVERLAY_ROWS 18
 #define FB_CONSOLE_OVERLAY_MARGIN 10
-#define FB_MOUSE_CURSOR_WIDTH 9
-#define FB_MOUSE_CURSOR_HEIGHT 9
-#define FB_MOUSE_CURSOR_SAVE_WIDTH 10
-#define FB_MOUSE_CURSOR_SAVE_HEIGHT 10
+#define FB_MOUSE_CURSOR_WIDTH 12
+#define FB_MOUSE_CURSOR_HEIGHT 18
+#define FB_MOUSE_CURSOR_SAVE_WIDTH 13
+#define FB_MOUSE_CURSOR_SAVE_HEIGHT 19
 
 static uint32_t framebuffer_stub[FB_STUB_WIDTH * FB_STUB_HEIGHT];
 static struct framebuffer_info framebuffer;
+/* Supervisor-only virtual range, separate from the heap and application mappings. */
+#define FB_BACKBUFFER_BASE 0x01400000
+#define FB_BACKBUFFER_LIMIT 0x00400000
+#define FB_MAX_ROWS 2048
+static uint32_t framebuffer_backbuffer;
+static uint32_t framebuffer_present_count;
+static uint16_t dirty_left[FB_MAX_ROWS];
+static uint16_t dirty_right[FB_MAX_ROWS];
 static int mouse_cursor_saved;
 static uint32_t mouse_cursor_x;
 static uint32_t mouse_cursor_y;
+static uint8_t mouse_cursor_buttons;
 static uint32_t mouse_cursor_pixels[FB_MOUSE_CURSOR_SAVE_HEIGHT][FB_MOUSE_CURSOR_SAVE_WIDTH];
 static char console_cells[FB_CONSOLE_MAX_ROWS][FB_CONSOLE_MAX_COLS];
 static uint32_t console_cols;
@@ -42,6 +52,8 @@ static uint32_t console_panel_width;
 static uint32_t console_panel_height;
 static int console_overlay_mode;
 static int console_active;
+static int console_deferred;
+static volatile int console_dirty;
 
 struct framebuffer_boot_info {
     uint32_t magic;
@@ -53,9 +65,78 @@ struct framebuffer_boot_info {
 };
 
 static void framebuffer_set_stub(void);
+static void framebuffer_console_paint(void);
 
 static uint32_t* framebuffer_pixel_address(uint32_t x, uint32_t y) {
-    return (uint32_t*)(framebuffer.address + (y * framebuffer.pitch) + (x * 4));
+    uint32_t base = framebuffer_backbuffer ? framebuffer_backbuffer : framebuffer.address;
+    return (uint32_t*)(base + (y * framebuffer.pitch) + (x * 4));
+}
+
+static void framebuffer_initialize_backbuffer(uint32_t bytes) {
+    uint32_t offset = 0;
+    if (bytes > FB_BACKBUFFER_LIMIT || framebuffer.height > FB_MAX_ROWS ||
+            framebuffer.width > 65535) {
+        return;
+    }
+    for (; offset < bytes; offset += PMM_PAGE_SIZE) {
+        uint32_t page = pmm_alloc_page();
+        if (!page) {
+            break;
+        }
+        if (!arch_map_page(FB_BACKBUFFER_BASE + offset, page, ARCH_PAGE_WRITABLE)) {
+            pmm_free_page(page);
+            break;
+        }
+    }
+    if (offset < bytes) {
+        while (offset) {
+            offset -= PMM_PAGE_SIZE;
+            uint32_t address = FB_BACKBUFFER_BASE + offset;
+            uint32_t page = arch_get_physical(address);
+            arch_unmap_page(address);
+            pmm_free_page(page);
+        }
+        return;
+    }
+    framebuffer_backbuffer = FB_BACKBUFFER_BASE;
+    for (uint32_t y = 0; y < framebuffer.height; y++) {
+        dirty_left[y] = (uint16_t)framebuffer.width;
+        dirty_right[y] = 0;
+    }
+}
+
+int framebuffer_is_buffered(void) {
+    return framebuffer_backbuffer != 0;
+}
+
+void framebuffer_present(void) {
+    /* IRQ keyboard output only updates cells; all framebuffer writes occur here or in the main loop. */
+    if (console_dirty && !console_deferred) {
+        int cursor_visible = mouse_cursor_saved;
+        framebuffer_erase_mouse_cursor();
+        framebuffer_console_paint();
+        if (cursor_visible) framebuffer_draw_mouse_cursor(mouse_cursor_x, mouse_cursor_y, mouse_cursor_buttons);
+    }
+    if (!framebuffer_backbuffer) {
+        return;
+    }
+    int changed = 0;
+    for (uint32_t y = 0; y < framebuffer.height; y++) {
+        uint32_t left = dirty_left[y];
+        uint32_t right = dirty_right[y];
+        if (left >= right) {
+            continue;
+        }
+        const uint32_t* source = framebuffer_pixel_address(left, y);
+        volatile uint32_t* target = (volatile uint32_t*)(framebuffer.address + y * framebuffer.pitch);
+        for (uint32_t x = left; x < right; x++) {
+            target[x] = *source++;
+        }
+        dirty_left[y] = (uint16_t)framebuffer.width;
+        dirty_right[y] = 0;
+        changed = 1;
+    }
+    framebuffer_present_count += changed;
 }
 
 static uint32_t framebuffer_get_pixel(uint32_t x, uint32_t y) {
@@ -87,6 +168,7 @@ void framebuffer_initialize(void) {
             framebuffer.candidate_height = boot_info->height;
             framebuffer.candidate_pitch = boot_info->pitch;
             framebuffer.candidate_bits_per_pixel = boot_info->bits_per_pixel;
+            framebuffer_initialize_backbuffer(bytes);
             framebuffer_clear(0x00000000);
             return;
         }
@@ -134,11 +216,7 @@ void framebuffer_clear(uint32_t color) {
     }
 
     framebuffer_reset_mouse_cursor();
-    for (uint32_t y = 0; y < framebuffer.height; y++) {
-        for (uint32_t x = 0; x < framebuffer.width; x++) {
-            framebuffer_put_pixel(x, y, color);
-        }
-    }
+    framebuffer_fill_rect(0, 0, framebuffer.width, framebuffer.height, color);
 }
 
 void framebuffer_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
@@ -147,6 +225,22 @@ void framebuffer_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     }
 
     *framebuffer_pixel_address(x, y) = color;
+    if (framebuffer_backbuffer) {
+        if (x < dirty_left[y]) dirty_left[y] = (uint16_t)x;
+        if (x + 1 > dirty_right[y]) dirty_right[y] = (uint16_t)(x + 1);
+    }
+}
+
+void framebuffer_blend_pixel(uint32_t x, uint32_t y, uint32_t color, uint8_t alpha) {
+    if (!alpha) return;
+    uint32_t background = framebuffer_get_pixel(x, y);
+    uint32_t result = 0;
+    for (unsigned shift = 0; shift < 24; shift += 8) {
+        uint32_t channel = (((color >> shift) & 255) * alpha +
+            ((background >> shift) & 255) * (255 - alpha) + 127) / 255;
+        result |= channel << shift;
+    }
+    framebuffer_put_pixel(x, y, result);
 }
 
 void framebuffer_draw_line(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t color) {
@@ -180,23 +274,21 @@ void framebuffer_draw_line(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, u
 }
 
 void framebuffer_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color) {
-    if (!framebuffer_available()) {
+    if (!framebuffer_available() || x >= framebuffer.width || y >= framebuffer.height) {
         return;
     }
-
+    if (width > framebuffer.width - x) width = framebuffer.width - x;
+    if (height > framebuffer.height - y) height = framebuffer.height - y;
+    if (!width || !height) return;
     for (uint32_t row = 0; row < height; row++) {
         uint32_t py = y + row;
-        if (py >= framebuffer.height) {
-            break;
-        }
-
+        uint32_t* pixels = framebuffer_pixel_address(x, py);
         for (uint32_t col = 0; col < width; col++) {
-            uint32_t px = x + col;
-            if (px >= framebuffer.width) {
-                break;
-            }
-
-            framebuffer_put_pixel(px, py, color);
+            pixels[col] = color;
+        }
+        if (framebuffer_backbuffer) {
+            if (x < dirty_left[py]) dirty_left[py] = (uint16_t)x;
+            if (x + width > dirty_right[py]) dirty_right[py] = (uint16_t)(x + width);
         }
     }
 }
@@ -257,15 +349,11 @@ static void framebuffer_save_mouse_cursor(uint32_t x, uint32_t y) {
 }
 
 static int framebuffer_mouse_cursor_pixel(uint32_t col, uint32_t row) {
-    if (col == 4 || row == 4) {
-        return 1;
-    }
-
-    if (col >= 3 && col <= 5 && row >= 3 && row <= 5) {
-        return 1;
-    }
-
-    return 0;
+    static const uint16_t arrow[FB_MOUSE_CURSOR_HEIGHT] = {
+        0x800,0xC00,0xE00,0xF00,0xF80,0xFC0,0xFE0,0xFF0,0xFF8,
+        0xFFC,0xFFE,0xFC0,0xDC0,0x8E0,0x060,0x070,0x030,0x010
+    };
+    return (arrow[row] & (0x800 >> col)) != 0;
 }
 
 static void framebuffer_draw_mouse_cursor_pixels(uint32_t x, uint32_t y, uint32_t color,
@@ -288,15 +376,8 @@ void framebuffer_draw_mouse_cursor(uint32_t x, uint32_t y, uint8_t buttons) {
 
     framebuffer_restore_mouse_cursor();
 
-    if (framebuffer.width > FB_MOUSE_CURSOR_SAVE_WIDTH && x > framebuffer.width - FB_MOUSE_CURSOR_SAVE_WIDTH) {
-        x = framebuffer.width - FB_MOUSE_CURSOR_SAVE_WIDTH;
-    }
-
-    if (framebuffer.height > FB_MOUSE_CURSOR_SAVE_HEIGHT && y > framebuffer.height - FB_MOUSE_CURSOR_SAVE_HEIGHT) {
-        y = framebuffer.height - FB_MOUSE_CURSOR_SAVE_HEIGHT;
-    }
-
     framebuffer_save_mouse_cursor(x, y);
+    mouse_cursor_buttons = buttons;
     framebuffer_draw_mouse_cursor_pixels(x, y, 0x00000000, 1, 1);
     framebuffer_draw_mouse_cursor_pixels(x, y, color, 0, 0);
 }
@@ -806,13 +887,17 @@ static void framebuffer_console_draw_frame(void) {
     }
 
     framebuffer_fill_rect(console_panel_x, console_panel_y, console_panel_width, console_panel_height, 0x000B1018);
-    framebuffer_fill_rect(console_panel_x, console_panel_y, console_panel_width, 13, 0x0018232F);
-    framebuffer_write_text(console_panel_x + 6, console_panel_y + 4,
-        console_overlay_mode ? "KERNEL1 GFX SHELL" : "KERNEL1 GRAPHICAL CONSOLE", 0x00E8EAED);
-    framebuffer_draw_rect(console_panel_x, console_panel_y, console_panel_width, console_panel_height, 0x003A4A5C);
+    if (console_overlay_mode) {
+        framebuffer_draw_rect(console_panel_x, console_panel_y, console_panel_width, console_panel_height, 0x003A4A5C);
+    } else {
+        framebuffer_fill_rect(console_panel_x, console_panel_y, console_panel_width, 13, 0x0018232F);
+        framebuffer_write_text(console_panel_x + 6, console_panel_y + 4,
+            "KERNEL1 GRAPHICAL CONSOLE", 0x00E8EAED);
+        framebuffer_draw_rect(console_panel_x, console_panel_y, console_panel_width, console_panel_height, 0x003A4A5C);
+    }
 }
 
-static void framebuffer_console_render_cell(uint32_t col, uint32_t row) {
+static void framebuffer_console_paint_cell(uint32_t col, uint32_t row) {
     char text[2];
     uint32_t x = console_origin_x + col * FB_CONSOLE_CELL_WIDTH;
     uint32_t y = console_origin_y + row * FB_CONSOLE_CELL_HEIGHT;
@@ -827,24 +912,47 @@ static void framebuffer_console_render_cell(uint32_t col, uint32_t row) {
     framebuffer_write_text(x, y, text, 0x00E8EAED);
 }
 
-static void framebuffer_console_render_cursor(void) {
+static void framebuffer_console_render_cell(uint32_t col, uint32_t row) {
+    (void)col;
+    (void)row;
+    console_dirty = 1;
+}
+
+static void framebuffer_console_paint_cursor(void) {
     uint32_t x = console_origin_x + console_cursor_col * FB_CONSOLE_CELL_WIDTH;
     uint32_t y = console_origin_y + console_cursor_row * FB_CONSOLE_CELL_HEIGHT + 8;
     framebuffer_fill_rect(x, y, 5, 1, 0x0048D597);
+}
+
+static void framebuffer_console_render_cursor(void) {
+    console_dirty = 1;
 }
 
 static void framebuffer_console_erase_cursor(void) {
     framebuffer_console_render_cell(console_cursor_col, console_cursor_row);
 }
 
-static void framebuffer_console_redraw(void) {
+static void framebuffer_console_paint(void) {
+    console_dirty = 0;
     framebuffer_console_draw_frame();
     for (uint32_t row = 0; row < console_rows; row++) {
         for (uint32_t col = 0; col < console_cols; col++) {
-            framebuffer_console_render_cell(col, row);
+            framebuffer_console_paint_cell(col, row);
         }
     }
-    framebuffer_console_render_cursor();
+    framebuffer_console_paint_cursor();
+}
+
+static void framebuffer_console_redraw(void) {
+    console_dirty = 1;
+}
+
+void framebuffer_console_set_deferred(int deferred) {
+    console_deferred = deferred;
+}
+
+int framebuffer_console_needs_redraw(void) {
+    return console_dirty;
 }
 
 static void framebuffer_console_scroll(void) {
@@ -909,6 +1017,44 @@ void framebuffer_console_reset(void) {
     }
 
     framebuffer_console_redraw();
+}
+
+void framebuffer_console_set_window(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (width < 48 || height < 24) {
+        return;
+    }
+
+    console_panel_x = x;
+    console_panel_y = y;
+    console_panel_width = width;
+    console_panel_height = height;
+    console_origin_x = x + 6;
+    console_origin_y = y + 6;
+    console_cols = (width - 12) / FB_CONSOLE_CELL_WIDTH;
+    console_rows = (height - 12) / FB_CONSOLE_CELL_HEIGHT;
+    if (console_cols > FB_CONSOLE_MAX_COLS) {
+        console_cols = FB_CONSOLE_MAX_COLS;
+    }
+    if (console_rows > FB_CONSOLE_MAX_ROWS) {
+        console_rows = FB_CONSOLE_MAX_ROWS;
+    }
+    if (console_cols == 0) {
+        console_cols = 1;
+    }
+    if (console_rows == 0) {
+        console_rows = 1;
+    }
+    if (console_cursor_col >= console_cols) {
+        console_cursor_col = console_cols - 1;
+    }
+    if (console_cursor_row >= console_rows) {
+        console_cursor_row = console_rows - 1;
+    }
+
+    console_overlay_mode = 1;
+    console_active = 1;
+    /* Desktop composition owns painting; IRQ output only updates console cells. */
+    framebuffer_console_paint();
 }
 
 void framebuffer_console_write(const char* text) {
@@ -1000,6 +1146,8 @@ void framebuffer_print_info(void) {
     terminal_write_dec(framebuffer.pitch);
     terminal_write("\n  address=");
     terminal_write_hex(framebuffer.address);
+    terminal_write("\n  double buffer=");
+    terminal_write(framebuffer_is_buffered() ? "on" : "off (direct fallback)");
     if (framebuffer.vbe_candidate_found && !framebuffer.hardware_backed) {
         terminal_write("\n  vbe candidate=");
         terminal_write_dec(framebuffer.candidate_width);

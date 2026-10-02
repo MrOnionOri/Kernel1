@@ -7,7 +7,12 @@
 
 KERNEL_OFFSET equ 0x10000
 KERNEL_LOAD_SEGMENT equ 0x1000
-KERNEL_SECTORS equ 356
+%ifndef KERNEL_SECTORS
+%define KERNEL_SECTORS 448
+%endif
+%ifndef INITRD_SECTORS
+%define INITRD_SECTORS 16
+%endif
 KERNEL_READ_CHUNK equ 8
 MEMORY_MAP_ADDR equ 0x9000
 MEMORY_MAP_ENTRIES equ MEMORY_MAP_ADDR + 4
@@ -109,7 +114,7 @@ load_kernel:
     mov word [dap_buffer_offset], 0x0000
     mov word [dap_buffer_segment], KERNEL_LOAD_SEGMENT
     mov word [dap_start_lba], 1
-    mov word [sectors_remaining], KERNEL_SECTORS
+    mov word [sectors_remaining], KERNEL_SECTORS + INITRD_SECTORS
 
 .next_chunk:
     cmp word [sectors_remaining], 0
@@ -183,6 +188,10 @@ get_memory_map:
 
 enter_protected_mode:
     cli
+    in al, 0x92
+    or al, 2
+    and al, 0xFE
+    out 0x92, al
     lgdt [gdt_descriptor]
 
     mov eax, cr0
@@ -203,6 +212,7 @@ init_pm:
     mov ebp, 0x90000
     mov esp, ebp
 
+    mov esi, KERNEL_OFFSET + KERNEL_SECTORS * 512
     call KERNEL_OFFSET
 
 pm_hang:

@@ -19,6 +19,9 @@ struct framebuffer_info {
 };
 
 void framebuffer_initialize(void);
+void framebuffer_present(void);
+int framebuffer_is_buffered(void);
+void framebuffer_blend_pixel(uint32_t x, uint32_t y, uint32_t color, uint8_t alpha);
 int framebuffer_available(void);
 const struct framebuffer_info* framebuffer_get_info(void);
 void framebuffer_clear(uint32_t color);
@@ -47,6 +50,9 @@ void framebuffer_draw_files_panel(int valid, const char* path, uint32_t children
     const char* third_name, uint32_t third_type);
 void framebuffer_draw_launcher_panel(void);
 void framebuffer_console_reset(void);
+void framebuffer_console_set_window(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+void framebuffer_console_set_deferred(int deferred);
+int framebuffer_console_needs_redraw(void);
 void framebuffer_console_write(const char* text);
 void framebuffer_console_cursor_left(void);
 void framebuffer_console_cursor_right(void);

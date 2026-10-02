@@ -26,6 +26,10 @@ void arch_enable_irq(uint8_t irq) {
     pic_clear_mask(irq);
 }
 
+void arch_unmap_page(uint32_t virtual_address) {
+    vmm_unmap_page(virtual_address);
+}
+
 int arch_map_page(uint32_t virtual_address, uint32_t physical_address, uint32_t flags) {
     uint32_t x86_flags = 0;
 

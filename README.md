@@ -54,6 +54,12 @@ En WSL/Linux:
 ./build.sh run
 ```
 
+En WSLg, el script selecciona GTK/X11 para capturar el movimiento relativo del
+mouse PS/2. Una variable `GDK_BACKEND` definida explicitamente tiene prioridad.
+Haz clic dentro de QEMU para capturar el mouse; `Ctrl+Alt+G` lo libera.
+Si llegan clics pero no movimiento, cierra la instancia anterior y vuelve a
+ejecutar el script. Debe mostrar `QEMU: GTK backend x11 (WSLg)`.
+
 En Windows PowerShell:
 
 ```powershell
@@ -65,6 +71,37 @@ O con Make:
 ```bash
 make run
 ```
+
+## Escritorio grafico
+
+Con VBE disponible, el sistema arranca directamente en el escritorio. Abre
+Files, Apps, Clock, Settings o Terminal desde el lanzador de la izquierda.
+La terminal empieza oculta y solo recibe teclado cuando tiene el foco.
+
+El escritorio usa ventanas claras, texto suavizado con minusculas, iconos y
+resaltado al pasar el mouse. Los controles de icono muestran su nombre al apuntarlos.
+El doble bufer compone primero en RAM y presenta al terminar cada cuadro;
+`gfx info` muestra `double buffer=on`. No requiere limpiar el disco para actualizar.
+
+- FILES permite abrir carpetas y archivos, volver al inicio o al padre y
+  recorrer paginas con las flechas. VIEWER muestra una vista previa de texto.
+- SETTINGS cambia el fondo, pausa los widgets y acomoda las ventanas abiertas.
+  Los ajustes duran hasta reiniciar.
+- Los botones de la derecha del titulo minimizan, maximizan/restauran y cierran.
+  Arrastra la barra de titulo para mover; el lanzador recupera ventanas ocultas.
+- `gfx desktop` vuelve al escritorio inicial. `gfx windows off` vuelve al
+  dashboard y consola de diagnostico.
+
+Prueba automatica con QEMU sin ventana, sobre discos temporales (`-snapshot`):
+
+```bash
+./build.sh
+python3 tools/gui_smoke.py
+```
+
+Las capturas de prueba quedan en `build/gui-*.png`.
+Esta prueba inyecta eventos por QMP: comprueba el driver y el escritorio, pero
+la captura del mouse fisico en GTK/WSLg requiere probar tambien la ventana.
 
 ## Estructura
 

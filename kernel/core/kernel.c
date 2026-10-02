@@ -42,12 +42,15 @@ void kernel_main(void) {
     terminal_write("Portable layout ready. Next: app loader/initrd.\n");
     keyboard_initialize();
     shell_initialize();
+    shell_system_initialize_desktop();
+    framebuffer_present();
 
     arch_enable_interrupts();
 
     for (;;) {
         shell_poll();
         shell_system_tick();
+        framebuffer_present();
         arch_halt();
     }
 }

@@ -31,14 +31,60 @@ behind small arch, driver, VFS, task, and app interfaces.
 3. The kernel enters 32-bit protected mode at `0x10000`.
 4. `kernel/core/kernel.c` initializes arch, memory, drivers, tasks, VFS, initrd,
    app registry, and shell.
-5. The interactive shell becomes the main control surface.
+5. With a hardware framebuffer, the graphical desktop opens with Files and Apps.
+   The terminal is optional, launched from the desktop; VGA-only boot keeps the shell.
 
 The build scripts reserve fixed disk-image space for the kernel and initrd. If
-the kernel image grows, the sector constants in `build.sh`, `build.ps1`,
-`boot/boot.asm`, and the initrd load address in `kernel/core/initrd.c` must stay
-in sync. The image currently reserves 340 sectors for the kernel and 16 for the
-initrd; the boot sector loads both areas (`340 + 16 = 356`), and the kernel reads
-the initrd at `0x3A800`.
+the kernel image grows, keep the sizes in `build.sh` and `build.ps1` in sync.
+Both scripts pass their sector counts to NASM. The image reserves 448 sectors
+for the kernel and 16 for the initrd. The boot sector loads both, enables A20,
+and passes the temporary initrd address in ESI. Entry code copies its 8192 bytes
+to reserved low memory at `0x80000`. The initrd address no longer depends on
+kernel size. Runtime BSS starts at `0x100000`, is explicitly zeroed at entry,
+and is reserved by PMM up to `kernel_end`; it cannot overlap the VGA/BIOS hole.
+
+## Graphical Desktop
+
+`shell_system.c` currently owns the desktop and eight built-in windows. These
+are kernel widgets, not independent user-space GUI processes. `ui.c` supplies
+bitmap icons, buttons, checkboxes and bounded labels. Launchers and their hit
+tests share geometry, as do title controls and file navigation controls.
+
+The desktop uses light surfaces, a 14px mixed-case antialiased font, 16px icons,
+hover feedback and control tooltips. `ui_font.h` is a checked-in 4-bit coverage
+atlas derived from DejaVu Sans; the license is in `docs/licenses/DejaVu.txt`.
+`tools/generate_ui_font.py` regenerates it with Pillow and the original TTF.
+Normal builds need neither Pillow nor system fonts. The diagnostic console
+keeps its compact fixed-width font.
+
+The framebuffer allocates physical pages for a backbuffer mapped supervisor-only
+at `0x01400000` (maximum 4 MiB), outside the heap and initial identity mapping.
+The hardware framebuffer address remains unchanged. Drawing and cursor saves
+use the RAM surface; `framebuffer_present()` copies dirty row spans to VRAM
+after the main-loop composition finishes. Console IRQ output only marks its
+model dirty, including in legacy console mode. A fatal exception explicitly
+flushes the diagnostic console before halting. This is software double buffering,
+not page flipping or VSync: it removes intermediate erase/repaint frames but
+does not guarantee tear-free scanout. Allocation/mapping failure rolls back
+every allocated page and falls back to direct drawing. `gfx info` reports the mode.
+
+Files supports root/parent navigation and paging through VFS entries; opening a
+file shows its first 255 bytes in Viewer. Settings offers session-only background
+swatches, a live-widget toggle and window arrangement without closing documents.
+The legacy dashboard has a separate hit-test path so clicks on empty desktop
+space cannot draw old diagnostic panels.
+
+Keyboard input reaches the shell only while its visible window has focus.
+In window mode, console writes update cells and a dirty flag; the main loop
+paints them in window order, preserving overlapping windows and cursor pixels.
+The cursor uses a clipped arrow bitmap with a matching saved-background region.
+
+`tools/gui_smoke.py` boots QEMU with snapshot disks, sends real PS/2 input through
+QMP, checks guest state and framebuffer pixels, and captures `build/gui-*.png`.
+Its memory check accounts for task slots retaining their kernel stacks on first
+use, then requires `memtest: PASS` after those slots have been warmed up.
+It also checks supervisor-only backbuffer mappings, presentation, hover state,
+and a 4 MiB boot that exercises allocation rollback and direct rendering.
 
 ## Portability Rule
 
@@ -372,5 +418,5 @@ Recommended next steps:
 
 1. Add dynamically growing directories and longer file support.
 2. Harden IRQ0 preemption with longer stress tests and cleaner accounting.
-3. Replace framebuffer stub with BIOS VBE linear framebuffer data from boot.
-4. Add graphical text rendering, then mouse/events, then a small UI server.
+3. Add buffered composition and damage tracking to reduce window repaint cost.
+4. Move desktop widgets toward an event-driven UI service and user-space GUI apps.

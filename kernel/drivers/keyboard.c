@@ -2,6 +2,7 @@
 
 #include "io.h"
 #include "shell.h"
+#include "shell_system.h"
 
 #define KEYBOARD_DATA_PORT 0x60
 #define SCANCODE_LEFT_SHIFT 0x2A
@@ -65,7 +66,7 @@ void keyboard_handle_irq(void) {
     if (extended_scancode) {
         extended_scancode = 0;
 
-        if (scancode & 0x80) {
+        if ((scancode & 0x80) || !shell_system_accepts_keyboard()) {
             return;
         }
 
@@ -103,6 +104,10 @@ void keyboard_handle_irq(void) {
 
     if (scancode == SCANCODE_CAPS_LOCK) {
         caps_lock_enabled = !caps_lock_enabled;
+        return;
+    }
+
+    if (!shell_system_accepts_keyboard()) {
         return;
     }
 
